@@ -44,7 +44,7 @@ const portalSrc = `<!doctype html>
   }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%}
+html,body{margin:0;min-height:100%}
 body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);overscroll-behavior:none;font-size:14px;line-height:1.5;
   padding-top:calc(env(safe-area-inset-top) + 4px);
   /* App WebView 不传 env(safe-area-inset-bottom)，用固定大值覆盖 tabbar(56px)+系统导航栏(48px)+余量 */
@@ -376,6 +376,9 @@ if(typeof ddnas==="undefined"){
   window.ddnas={
     startBackup(){toast("备份功能请在 App 内使用。");}
   };
+}else{
+  // App WebView 环境：系统导航栏/手势条遮挡更多，增大底部留白确保内容可拉到底
+  document.body.style.paddingBottom="160px";
 }
 
 /* ========= 三栏切换 ========= */
