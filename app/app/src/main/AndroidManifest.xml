@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- DownloadManager 写公共 Download 目录：Android 10+ maxSdk=28 才需 WRITE -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:name=".DdnasApplication"
@@ -33,6 +35,13 @@
         <!-- 流式播放（ExoPlayer，注入 cookie） -->
         <activity
             android:name=".PlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.DDNAS" />
+
+        <!-- 图片预览（全屏 WebView，注入 cookie） -->
+        <activity
+            android:name=".ImageActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.DDNAS" />

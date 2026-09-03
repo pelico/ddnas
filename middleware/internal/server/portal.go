@@ -734,10 +734,10 @@ function loadFiles(p){
       var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
       var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
       var btn=(kind==="video"||kind==="audio")
-        ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-type="play">播放</button>'
+        ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button>'
         :(kind==="image"
-          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-type="view">查看</button>'
-          :'<button class="fbtn" data-type="noop">查看</button>');
+          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
+          :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>');
       return '<div class="fitem" data-type="file">'+
         '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
     }).join("")+"</div>";
@@ -758,7 +758,12 @@ function loadFiles(p){
     });
     body.querySelectorAll('button[data-type="view"]').forEach(b=>{
       b.addEventListener("click",e=>{
-        e.stopPropagation();viewImage(b.dataset.rel||"");
+        e.stopPropagation();viewImage(b.dataset.rel||"",b.dataset.name||"");
+      });
+    });
+    body.querySelectorAll('button[data-type="download"]').forEach(b=>{
+      b.addEventListener("click",e=>{
+        e.stopPropagation();downloadFile(b.dataset.rel||"",b.dataset.name||"");
       });
     });
   }).catch(function(e){
@@ -849,11 +854,19 @@ function openVideoPlayer(url,title){
   document.body.appendChild(ov);
   v.play().catch(function(){});
 }
-function viewImage(relPath){
+function viewImage(relPath,name){
   if(!relPath)return;
   // 与 play 复用同一 stream 代理：浏览器 img 直接加载即可
   const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
-  const name=relPath.split("/").pop()||"图片";
+  const dispName=name||(relPath.split("/").pop()||"图片");
+  // App 原生桥：用 PhotoView 等打开，体验优于 WebView 内联预览
+  if(typeof ddnas!=="undefined"&&typeof ddnas.viewImage==="function"){
+    try{ddnas.viewImage(url,dispName);return;}catch(e){}
+  }
+  // 浏览器环境或桥不可用：HTML5 <img> 内联预览
+  openImageOverlay(url,dispName);
+}
+function openImageOverlay(url,title){
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column";
   var img=document.createElement("img");
@@ -892,13 +905,28 @@ function viewImage(relPath){
   var bar=document.createElement("div");
   bar.style.cssText="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent)";
   var t=document.createElement("span");
-  t.textContent=name;t.style.cssText="color:#fff;font-size:14px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+  t.textContent=title;t.style.cssText="color:#fff;font-size:14px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
   var c=document.createElement("button");
   c.textContent="\u2715";c.style.cssText="color:#fff;background:rgba(255,255,255,.2);border:none;width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer";
   c.onclick=function(){ov.remove();};
   bar.appendChild(t);bar.appendChild(c);
   ov.appendChild(bar);ov.appendChild(img);
   document.body.appendChild(ov);
+}
+function downloadFile(relPath,name){
+  if(!relPath){toast("无效路径");return;}
+  const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
+  const dispName=name||(relPath.split("/").pop()||"文件");
+  // App 原生桥：弹下载确认对话框，确认后写入 Download 目录
+  if(typeof ddnas!=="undefined"&&typeof ddnas.downloadFile==="function"){
+    try{ddnas.downloadFile(url,dispName);return;}catch(e){}
+  }
+  // 浏览器环境：直接打开下载链接（浏览器自带下载对话框）
+  try{
+    const a=document.createElement("a");
+    a.href=url;a.download=dispName;a.target="_blank";a.rel="noopener";
+    document.body.appendChild(a);a.click();a.remove();
+  }catch(e){toast("下载失败："+(e&&e.message||e));}
 }
 async function upload(input){
   const files=input.files;if(!files||!files.length)return;

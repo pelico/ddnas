@@ -354,6 +354,20 @@ class MainActivity : ComponentActivity() {
             kotlinx.coroutines.runBlocking { backupStore.setRemoteBase(base) }
         }
 
+        /** App 内查看图片：启动 ImageActivity 全屏 WebView 加载（注入 cookie）。
+         *  仅 portal.html 里 viewImage() 在 ddnas 桥可用时调用。 */
+        @JavascriptInterface
+        fun viewImage(url: String, name: String) {
+            runOnUiThread { startImage(url, name) }
+        }
+
+        /** App 内下载文件：弹确认对话框，确认后用 DownloadManager 写入公共 Download 目录，
+         *  注入 admin cookie 解决 stream 鉴权。 */
+        @JavascriptInterface
+        fun downloadFile(url: String, name: String) {
+            runOnUiThread { showDownloadDialog(url, name) }
+        }
+
         private fun escJSON(s: String): String =
             s.replace("\\", "\\\\").replace("\"", "\\\"")
                 .replace("\n", "\\n").replace("\r", "\\r")
@@ -376,6 +390,59 @@ class MainActivity : ComponentActivity() {
                 putExtra(PlayerActivity.EXTRA_COOKIE, cookie ?: "")
             }
         )
+    }
+
+    /** 启动图片预览 Activity。cookie 来自 WebView 当前会话。 */
+    private fun startImage(imageUrl: String, name: String) {
+        val active = currentServer() ?: return
+        val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
+        startActivity(
+            Intent(this, ImageActivity::class.java).apply {
+                putExtra(ImageActivity.EXTRA_URL, imageUrl)
+                putExtra(ImageActivity.EXTRA_COOKIE, cookie)
+            }
+        )
+    }
+
+    /** 下载确认对话框：用户确认后用 DownloadManager 写入公共 Download 目录。 */
+    private fun showDownloadDialog(url: String, name: String) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("下载文件")
+            .setMessage("将下载到手机 Download 目录：\n$name")
+            .setPositiveButton("下载") { _, _ ->
+                startDownloadWithManager(url, name)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 用 DownloadManager 异步下载，注入 cookie 解决 stream 鉴权。 */
+    private fun startDownloadWithManager(url: String, name: String) {
+        val active = currentServer()
+        if (active == null) {
+            android.widget.Toast.makeText(this, "未配置服务器", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
+        val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+        val safeName = name.ifBlank { "ddnas_file" }
+            .replace("/", "_").replace("\\", "_").replace(":", "_")
+        val req = android.app.DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle("DDNAS: $safeName")
+            setDescription("从中间件下载到 Download 目录")
+            setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            // 公共 Download 目录，Android 10+ 无需写权限
+            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, safeName)
+            if (cookie.isNotEmpty()) addRequestHeader("Cookie", cookie)
+            addRequestHeader("User-Agent", "DDNAS-App")
+        }
+        try {
+            dm.enqueue(req)
+            android.widget.Toast.makeText(this, "已开始下载: $safeName", android.widget.Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            android.util.Log.e("DDNAS-Download", "enqueue fail", e)
+            android.widget.Toast.makeText(this, "下载失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun onTreePicked(treeUri: Uri) {
