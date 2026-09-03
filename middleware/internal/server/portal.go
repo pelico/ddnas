@@ -551,36 +551,43 @@ function renderMonitor(s){
   const cpu=s.cpu||{};
   const mem=s.memory||{};
   const net=(s.network||[])[0]||{};
-  // 监控卡也取最大磁盘，与 NAS 卡片一致
-  let disk={};
-  (s.disks||[]).forEach(d=>{if(!disk.total_bytes||+d.total_bytes>+disk.total_bytes)disk=d;});
 
   const cpuPct=+cpu.usage_percent||0;
-  const cpuHtml=mCardHTML({title:"CPU",percent:cpuPct,metrics:[
-    {k:"负载",v:(+cpu.load1||0).toFixed(2)},
-    {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
-  ]});
+  const cpuHtml=mCardHTML({title:"CPU",percent:cpuPct,
+    right:cpuPct.toFixed(1)+"%",
+    metrics:[
+      {k:"负载",v:(+cpu.load1||0).toFixed(2)},
+      {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
+    ]
+  });
   const memPct=+mem.usage_percent||0;
-  const memHtml=mCardHTML({title:"内存",percent:memPct,metrics:[
-    {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
-    {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
-  ]});
+  const memHtml=mCardHTML({title:"内存",percent:memPct,
+    right:memPct.toFixed(1)+"%",
+    metrics:[
+      {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
+      {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
+    ]
+  });
   // 网络：后端基于两次采样做差计算 B/s 速率，首次请求为 0
   const netHtml=mCardHTML({title:"网络",bar:false,
-    right:"↓ "+fmtBytes(+net.rx_rate||0)+"/s ↑ "+fmtBytes(+net.tx_rate||0)+"/s",
+    right:"↓"+fmtBytes(+net.rx_rate||0)+"/s ↑"+fmtBytes(+net.tx_rate||0)+"/s",
     metrics:[
       {k:"累计接收",v:fmtBytes(+net.rx_bytes||0)},
       {k:"累计发送",v:fmtBytes(+net.tx_bytes||0)},
       {k:"网卡",v:esc(net.device||"—")}
     ]
   });
-  const diskPct=+disk.usage_percent||0;
-  const diskHtml=mCardHTML({title:"硬盘",percent:diskPct,metrics:[
-    {k:"已用",v:fmtBytes(+disk.used_bytes||0)},
-    {k:"总量",v:fmtBytes(+disk.total_bytes||0)},
-    {k:"挂载",v:esc(disk.mountpoint||"—")}
-  ]});
-  box.innerHTML=cpuHtml+memHtml+netHtml+diskHtml;
+  // 温度：取最高值作为核心温度展示（node_hwmon_temp_celsius）
+  let maxTemp=0,tempName="";
+  (s.temps||[]).forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;tempName=t.chip+"/"+t.name;}});
+  const tempHtml=mCardHTML({title:"温度",bar:false,
+    right:maxTemp>0?maxTemp.toFixed(1)+"°C":"无",
+    metrics:maxTemp>0?[
+      {k:"传感器",v:esc(tempName)},
+      {k:"数量",v:(s.temps||[]).length+"个"}
+    ]:[{k:"提示",v:"node_exporter 未启用 hwmon collector"}]
+  });
+  box.innerHTML=cpuHtml+memHtml+netHtml+tempHtml;
 }
 
 /* ========= 文件浏览 ========= */

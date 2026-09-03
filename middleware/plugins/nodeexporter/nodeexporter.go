@@ -108,18 +108,26 @@ func (a *Adapter) Close() error { return nil }
 // --- 设备信息结构 ---
 
 type systemInfo struct {
-	Hostname  string   `json:"hostname"`
-	OS        string   `json:"os"`
-	Kernel    string   `json:"kernel"`
-	Arch      string   `json:"arch"`
-	Uptime    float64  `json:"uptime_seconds"`
-	CPU       cpuInfo  `json:"cpu"`
-	Memory    memInfo  `json:"memory"`
-	Disks     []fsInfo `json:"disks"`
+	Hostname  string    `json:"hostname"`
+	OS        string    `json:"os"`
+	Kernel    string    `json:"kernel"`
+	Arch      string    `json:"arch"`
+	Uptime    float64   `json:"uptime_seconds"`
+	CPU       cpuInfo   `json:"cpu"`
+	Memory    memInfo   `json:"memory"`
+	Disks     []fsInfo  `json:"disks"`
 	Network   []netInfo `json:"network"`
+	Temps     []tempInfo `json:"temps,omitempty"`
 	// 调试字段：解析到 0 条指标或关键字段全空时填充原始文本前 1000 字符，
 	// 供用户反馈帮助定位 node_exporter 版本差异/指标名不同的问题。
-	Debug     string   `json:"_debug,omitempty"`
+	Debug     string    `json:"_debug,omitempty"`
+}
+
+// tempInfo 温度传感器读数（node_hwmon_temp_celsius）。
+type tempInfo struct {
+	Name  string  `json:"name"`  // sensor 标签，如 temp1
+	Chip  string  `json:"chip"`  // 芯片标识
+	Value float64 `json:"value"` // 摄氏度
 }
 
 type cpuInfo struct {
@@ -308,6 +316,7 @@ func parseSystem(text string) systemInfo {
 	}
 	info.Disks = parseFS(ms)
 	info.Network = parseNet(ms)
+	info.Temps = parseTemp(ms)
 	return info
 }
 
@@ -475,6 +484,29 @@ func (a *Adapter) computeNetRate(nets []netInfo) {
 		next[n.Device] = netSample{rx: n.RxBytes, tx: n.TxBytes, ts: now}
 	}
 	a.netLast = next
+}
+
+// parseTemp 解析 node_hwmon_temp_celsius 温度传感器。
+// 不同设备芯片/标签不同，返回全部传感器，前端取最高值作为 CPU 温度展示。
+func parseTemp(metrics []metric) []tempInfo {
+	seen := map[string]tempInfo{}
+	for _, m := range metrics {
+		if m.name != "node_hwmon_temp_celsius" || m.value <= 0 {
+			continue
+		}
+		chip := m.labels["chip"]
+		sensor := m.labels["sensor"]
+		if chip == "" && sensor == "" {
+			continue
+		}
+		key := chip + "/" + sensor
+		seen[key] = tempInfo{Name: sensor, Chip: chip, Value: m.value}
+	}
+	var out []tempInfo
+	for _, v := range seen {
+		out = append(out, v)
+	}
+	return out
 }
 
 // --- helpers ---
