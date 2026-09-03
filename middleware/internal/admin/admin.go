@@ -228,30 +228,11 @@ func (a *Admin) handleAdapter(w http.ResponseWriter, r *http.Request) {
 	}
 	cur := a.store.AdapterConfig(name)
 	if r.Method == "GET" {
-		type f struct {
-			plugin.ConfigField
-			Value string
-		}
-		var fields []f
-		for _, fld := range ad.ConfigSchema() {
-			val := ""
-			if v, ok := cur[fld.Key]; ok {
-				switch t := v.(type) {
-				case string:
-					val = t
-				case bool:
-					val = ""
-				default:
-					val = ""
-				}
-			}
-			fields = append(fields, f{ConfigField: fld, Value: val})
-		}
 		render(w, "adapter", map[string]any{
 			"Title":        name,
 			"Name":         name,
 			"Capabilities": strings.Join(ad.Capabilities(), ", "),
-			"Fields":       fields,
+			"Fields":       buildFields(ad, cur),
 		})
 		return
 	}
@@ -273,25 +254,53 @@ func (a *Admin) handleAdapter(w http.ResponseWriter, r *http.Request) {
 		render(w, "adapter", map[string]any{
 			"Title": name, "Name": name, "Capabilities": strings.Join(ad.Capabilities(), ", "),
 			"Error": err.Error(),
+			"Fields": buildFields(ad, saved),
 		})
 		return
 	}
 	if a.reload != nil {
 		a.reload()
 	}
-	// 重新渲染带 Saved 标记：重新读取字段
-	type f struct {
-		plugin.ConfigField
-		Value string
-	}
-	var fields []f
-	for _, fld := range ad.ConfigSchema() {
-		fields = append(fields, f{ConfigField: fld})
-	}
+	// 保存成功：从 store 重读当前配置回填表单，避免显示空值（曾导致"保存后变默认"假象）
 	render(w, "adapter", map[string]any{
 		"Title": name, "Name": name, "Capabilities": strings.Join(ad.Capabilities(), ", "),
-		"Saved": true, "Fields": fields,
+		"Saved": true, "Fields": buildFields(ad, a.store.AdapterConfig(name)),
 	})
+}
+
+// adapterField 是适配器配置页表单字段的视图模型：ConfigField + 当前值字符串。
+// 模板用 {{if .Value}}checked{{end}} 决定 checkbox 是否勾选，因此 bool 字段
+// 必须返回 "true"/"false" 而非空串，否则 enabled 永远显示为未勾选。
+type adapterField struct {
+	plugin.ConfigField
+	Value string
+}
+
+// buildFields 按 ConfigSchema 从 raw 构造表单字段视图，统一 GET/POST 渲染逻辑。
+// - string 字段直接回填原值
+// - bool 字段返回 "true"/"false"，模板据此正确勾选 checkbox
+func buildFields(ad plugin.Adapter, raw map[string]any) []adapterField {
+	var fields []adapterField
+	for _, fld := range ad.ConfigSchema() {
+		val := ""
+		if v, ok := raw[fld.Key]; ok {
+			switch t := v.(type) {
+			case string:
+				val = t
+			case bool:
+				// 必须用 "true"/"false"，让模板 {{if .Value}}checked{{end}} 生效
+				if t {
+					val = "true"
+				} else {
+					val = ""
+				}
+			default:
+				val = ""
+			}
+		}
+		fields = append(fields, adapterField{ConfigField: fld, Value: val})
+	}
+	return fields
 }
 
 // --- connection ---
