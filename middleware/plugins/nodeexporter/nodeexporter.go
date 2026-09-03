@@ -336,6 +336,19 @@ func parseSystem(ms []metric) systemInfo {
 	info.Disks = parseFS(ms)
 	info.Network = parseNet(ms)
 	info.Temps = parseTemp(ms)
+	// 在 network[0] 注入聚合卡，汇总所有物理网卡累计字节和。
+	// 前端只显示 network[0]，避免 Go map 遍历顺序随机导致每次刷新显示不同网卡、
+	// 数值飘忽看起来"不刷新"。聚合卡速率由 computeNetRate 后续基于各卡累加填充。
+	var sumRx, sumTx float64
+	for _, n := range info.Network {
+		sumRx += n.RxBytes
+		sumTx += n.TxBytes
+	}
+	info.Network = append([]netInfo{{
+		Device:  "__sum__",
+		RxBytes: sumRx,
+		TxBytes: sumTx,
+	}}, info.Network...)
 	return info
 }
 
@@ -514,6 +527,8 @@ func (a *Adapter) computeCpuUsage(ms []metric) (float64, bool) {
 
 // computeNetRate 基于上次采样的累计字节和当前值做差，除以真实时间差得到 B/s 速率。
 // counter 可能因重启/溢出回绕，差值为负时跳过（返回 0）。
+// 每张网卡单独计算；聚合卡（Device=="__sum__"）的速率 = 所有物理网卡速率之和，
+// 由 handleSystem 在调用本方法后基于各网卡 RxRate/TxRate 累加得到。
 func (a *Adapter) computeNetRate(nets []netInfo) {
 	a.netMu.Lock()
 	defer a.netMu.Unlock()
@@ -522,8 +537,12 @@ func (a *Adapter) computeNetRate(nets []netInfo) {
 		a.netLast = map[string]netSample{}
 	}
 	next := map[string]netSample{}
+	var sumRxRate, sumTxRate float64
 	for i := range nets {
 		n := &nets[i]
+		if n.Device == "__sum__" {
+			continue
+		}
 		if prev, ok := a.netLast[n.Device]; ok {
 			dt := now.Sub(prev.ts).Seconds()
 			if dt > 0.5 { // 时间差太小不可靠，跳过
@@ -535,9 +554,19 @@ func (a *Adapter) computeNetRate(nets []netInfo) {
 				}
 			}
 		}
+		sumRxRate += n.RxRate
+		sumTxRate += n.TxRate
 		next[n.Device] = netSample{rx: n.RxBytes, tx: n.TxBytes, ts: now}
 	}
 	a.netLast = next
+	// 把聚合速率写到 network[0]（聚合卡，由 parseSystem 注入）
+	for i := range nets {
+		if nets[i].Device == "__sum__" {
+			nets[i].RxRate = sumRxRate
+			nets[i].TxRate = sumTxRate
+			break
+		}
+	}
 }
 
 // parseTemp 解析 node_hwmon_temp_celsius 温度传感器。

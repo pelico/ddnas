@@ -687,12 +687,13 @@ function renderMonitor(s){
     ]
   });
   // 网络：后端基于两次采样做差计算 B/s 速率，首次请求为 0
+  const netDev=net.device==="__sum__"?"全部网卡":(net.device||"—");
   const netHtml=mCardHTML({title:"网络",bar:false,
     right:"↓"+fmtBytes(+net.rx_rate||0)+"/s ↑"+fmtBytes(+net.tx_rate||0)+"/s",
     metrics:[
       {k:"累计接收",v:fmtBytes(+net.rx_bytes||0)},
       {k:"累计发送",v:fmtBytes(+net.tx_bytes||0)},
-      {k:"网卡",v:esc(net.device||"—")}
+      {k:"网卡",v:esc(netDev)}
     ]
   });
   // 温度：取最高值作为核心温度展示（node_hwmon_temp_celsius）
