@@ -257,14 +257,13 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
     <div class="nas-card">
       <div class="nas-title" style="flex-direction:column;align-items:stretch;gap:6px">
-        <div class="txt" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="txt" style="display:flex;align-items:center;gap:8px;width:100%">
           <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;width:100%">
-          <div style="flex:1;min-width:0;font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-desc">家庭私有云 · 中间件 v1</div>
-          <span style="font-size:11px;opacity:.85;white-space:nowrap;text-align:right;min-width:96px;max-width:140px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0" id="d-stat">初始化中…</span>
+          <span style="flex:1;min-width:8px"></span>
+          <span style="font-size:11px;opacity:.85;white-space:nowrap;text-align:right;overflow:hidden;text-overflow:ellipsis;flex-shrink:0" id="d-stat">初始化中…</span>
           <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center;flex-shrink:0" onclick="forceRefreshSystem()">↻</button>
         </div>
+        <div style="font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-desc">家庭私有云 · 中间件 v1</div>
       </div>
       <div class="nas-usage">
         <div class="usage-bar"><i id="d-usage-bar"></i></div>
