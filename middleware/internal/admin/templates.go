@@ -145,5 +145,9 @@ func render(w io.Writer, page string, data map[string]any) error {
 	if _, ok := data["Nav"]; !ok {
 		data["Nav"] = true
 	}
-	return parsed[page].Execute(w, data)
+	// Execute 执行的是与 template 自身同名("base")的定义块，而该块为空
+	// （真正的 HTML 在 {{define "layout"}} 里），导致页面空白。
+	// 用 ExecuteTemplate 显式执行 "layout" 块，其内部 {{block "content" .}}
+	// 才会用各页面的 content 覆盖块渲染出完整页面。
+	return parsed[page].ExecuteTemplate(w, "layout", data)
 }
