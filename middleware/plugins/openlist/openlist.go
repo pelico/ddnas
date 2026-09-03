@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -196,6 +197,7 @@ func (a *Adapter) handleStream(w http.ResponseWriter, r *http.Request) {
 	u := strings.TrimRight(a.endpoint, "/") + "/d" + full
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, u, nil)
 	if err != nil {
+		log.Printf("[openlist] stream 构造请求失败 path=%s err=%v", full, err)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -207,16 +209,32 @@ func (a *Adapter) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
+		log.Printf("[openlist] stream 回源失败 url=%s err=%v", u, err)
 		writeErr(w, http.StatusBadGateway, "回源 OpenList 失败: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
-	// 透传响应头与状态码
-	for _, k := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"} {
+
+	// 4xx/5xx：读取响应体帮助定位（AList 常见 401 token 失效 / 403 权限 / 404 路径 / sign 缺失）
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Printf("[openlist] stream 上游错误 status=%d url=%s range=%s ctype=%s body=%s",
+			resp.StatusCode, u, r.Header.Get("Range"), resp.Header.Get("Content-Type"), strings.TrimSpace(string(body)))
+		writeErr(w, http.StatusBadGateway, fmt.Sprintf("OpenList 返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+		return
+	}
+
+	log.Printf("[openlist] stream ok status=%d ctype=%s len=%s url=%s",
+		resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"), u)
+
+	// 透传响应头与状态码（含 Content-Disposition 便于浏览器识别文件类型）
+	for _, k := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition", "ETag", "Last-Modified"} {
 		if v := resp.Header.Get(k); v != "" {
 			w.Header().Set(k, v)
 		}
 	}
+	// 允许浏览器 Range seek
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 }
