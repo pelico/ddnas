@@ -110,7 +110,7 @@ class BackupService : Service() {
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
         }.put(body).build()
-        client.newCall(req).execute().use { it.isSuccessful }
+        return client.newCall(req).execute().use { it.isSuccessful }
     }
 
     private fun buildNotification(text: String, done: Int, total: Int): Notification {

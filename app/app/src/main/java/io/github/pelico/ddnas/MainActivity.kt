@@ -24,7 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Server
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -38,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -98,7 +99,7 @@ class MainActivity : ComponentActivity() {
                         title = { Text(active.name) },
                         actions = {
                             IconButton(onClick = { showManager = true }) {
-                                Icon(Icons.Filled.Server, contentDescription = "切换服务器")
+                                Icon(Icons.Filled.Dns, contentDescription = "切换服务器")
                             }
                         }
                     )
@@ -120,22 +121,24 @@ class MainActivity : ComponentActivity() {
     /** 加载 /portal 的 WebView，注入 ddnas 桥。按服务器 url+name 为 key 重建以切换。 */
     @Composable
     private fun PortalWebView(server: Server) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.allowFileAccess = false
-                    webViewClient = WebViewClient()
-                    CookieManager.getInstance().setAcceptCookie(true)
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                    addJavascriptInterface(Bridge(), "ddnas")
-                    loadUrl(server.url.trimEnd('/') + "/portal")
+        // 切换服务器时整体重建 WebView，避免复用上一个会话的 cookie/JS 状态。
+        key(server.url + server.name) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.allowFileAccess = false
+                        webViewClient = WebViewClient()
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        addJavascriptInterface(Bridge(), "ddnas")
+                        loadUrl(server.url.trimEnd('/') + "/portal")
+                    }
                 }
-            },
-            key = server.url + server.name
-        )
+            )
+        }
     }
 
     // --- 多服务器管理 UI ---
