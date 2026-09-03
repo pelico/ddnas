@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ddnas_dark_bg">#FF101014</color>
+    <color name="ddnas_surface">#FF1B1B21</color>
+    <color name="ddnas_primary">#FF82B1FF</color>
+</resources>

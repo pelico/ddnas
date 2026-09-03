@@ -1,0 +1,6 @@
+# 构建缓存/测试产物不进镜像
+*.md
+Dockerfile
+.dockerignore
+**/testdata
+**/*_test.go
