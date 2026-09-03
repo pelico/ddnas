@@ -41,7 +41,8 @@ class FilesViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = FilesState.Loading
         viewModelScope.launch {
             _state.value = try {
-                FilesState.Success(repository.listFiles(base, _path.value))
+                val resp = repository.listFiles(base, _path.value)
+                FilesState.Success(resp.items, resp.total)
             } catch (e: Exception) {
                 FilesState.Error(e.message ?: "加载文件列表失败")
             }

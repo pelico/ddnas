@@ -3,7 +3,7 @@ package io.github.pelico.ddnas.net
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
-import org.jetbrains.kotlinx.serialization.json.Json
+import kotlinx.serialization.json.Json
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import io.github.pelico.ddnas.data.DdnasApi

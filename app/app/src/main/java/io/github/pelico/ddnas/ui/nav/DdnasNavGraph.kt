@@ -70,7 +70,7 @@ fun DdnasNavGraph() {
         }
     }
 
-    val current = currentBackStackEntryAsState().value?.destination?.route
+    val current = navController.currentBackStackEntryAsState().value?.destination?.route
     val showBottomBar = current in tabs.map { it.route }
 
     val resolvedStart = startDestination

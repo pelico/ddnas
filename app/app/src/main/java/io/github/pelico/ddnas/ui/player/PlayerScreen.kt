@@ -12,12 +12,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -48,7 +48,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as DdnasApplication
-    val token by app.settings.appToken.collectAsStateWithLifecycle()
+    val token by app.settings.appToken.collectAsState(initialValue = "")
 
     val exoPlayer = remember(streamUrl, token) {
         val okFactory = OkHttpDataSource.Factory(RetrofitProvider.okHttpClient)
