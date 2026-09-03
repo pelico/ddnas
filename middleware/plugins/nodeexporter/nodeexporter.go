@@ -107,6 +107,9 @@ type systemInfo struct {
 	Memory    memInfo  `json:"memory"`
 	Disks     []fsInfo `json:"disks"`
 	Network   []netInfo `json:"network"`
+	// 调试字段：解析到 0 条指标或关键字段全空时填充原始文本前 1000 字符，
+	// 供用户反馈帮助定位 node_exporter 版本差异/指标名不同的问题。
+	Debug     string   `json:"_debug,omitempty"`
 }
 
 type cpuInfo struct {
@@ -165,7 +168,17 @@ func (a *Adapter) handleSystem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "读取 metrics 失败: "+err.Error())
 		return
 	}
-	info := parseSystem(string(body))
+	text := string(body)
+	info := parseSystem(text)
+	// 调试：如果关键字段全空（说明解析没命中指标），填充原始文本前 1000 字符
+	// 帮助定位 node_exporter 版本差异导致的指标名不同问题。
+	if info.Hostname == "" && info.CPU.Load1 == 0 && info.Memory.Total == 0 {
+		preview := text
+		if len(preview) > 1000 {
+			preview = preview[:1000]
+		}
+		info.Debug = "解析到 0 条匹配指标。node_exporter 原始 /metrics 前 1000 字符：\n" + preview
+	}
 	writeJSON(w, http.StatusOK, info)
 }
 
