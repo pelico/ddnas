@@ -254,13 +254,6 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <div class="page">
 
     <div class="nas-card">
-      <div class="nas-user">
-        <span class="avatar" id="u-avatar">A</span>
-        <div class="meta">
-          <div class="name" id="u-name">admin</div>
-          <div class="role" id="u-role">管理员</div>
-        </div>
-      </div>
       <div class="nas-title">
         <div class="txt">
           <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
@@ -555,7 +548,8 @@ function renderNasCard(s){
     descEl.textContent="启用并配置 node 适配器后显示设备信息";
     return;
   }
-  modelEl.textContent=s.hostname?esc(s.hostname.toUpperCase()):"DDNAS";
+  // d-model 固定显示 DDNAS，不再用 hostname（node_exporter 主机名无意义）
+  modelEl.textContent="DDNAS";
   const isWan=false;netEl.textContent=isWan?"外网":"内网";
   // 取容量最大的磁盘作为主盘展示（后端已过滤 tmpfs/overlay 等虚拟 FS）
   let mainDisk=null;
