@@ -1,7 +1,10 @@
 name: build-docker
 
-# 构建 DDNAS 中间件 Docker 镜像，多架构（amd64 / arm64 / armv7），推送 GHCR。
-# armv7l 处理器（如部分老款 NAS/树莓派）由 linux/arm/v7 覆盖。
+# 构建 DDNAS 中间件 Docker 镜像，多架构（amd64 / arm64 / armv7）。
+# 采用「矩阵 + Go 原生交叉编译」：每个架构在独立的 buildx 调用里构建，
+# 构建阶段固定 BUILDPLATFORM（原生 amd64）交叉编译，不依赖 QEMU、
+# 不跨架构共享 GHA 缓存，彻底避免 arm/v7 镜像里被装入 amd64 二进制的问题。
+# 三张单架构镜像分别推送为 *-amd64/*-arm64/*-armv7，再由 manifest 作业合并成多架构清单。
 
 on:
   push:
@@ -19,9 +22,25 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            platform: linux/amd64
+            archtag: amd64
+          - goarch: arm64
+            platform: linux/arm64
+            archtag: arm64
+          - goarch: arm
+            goarm: "7"
+            platform: linux/arm/v7
+            archtag: armv7
     steps:
       - uses: actions/checkout@v4
 
+      # 最终镜像阶段（alpine armv7）的 RUN apk/adduser 仍需 QEMU 模拟；
+      # 构建阶段已用 --platform=$BUILDPLATFORM 固定在原生 amd64，不走 QEMU。
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
@@ -33,26 +52,72 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Compute tags
+        id: tags
+        run: |
+          repo="ghcr.io/${{ github.repository }}"
+          echo "archtag=$repo:latest-${{ matrix.archtag }}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME}"
+            echo "verarchtag=$repo:${v}-${{ matrix.archtag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "verarchtag=" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build and push
+      - name: Build and push single-arch image
         uses: docker/build-push-action@v6
         with:
           context: middleware
           file: middleware/Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: |
+            ${{ steps.tags.outputs.archtag }}
+            ${{ steps.tags.outputs.verarchtag }}
+          # 每个架构独立的 GHA 缓存命名空间，杜绝跨架构缓存命中
+          cache-from: type=gha,scope=${{ matrix.archtag }}
+          cache-to: type=gha,scope=${{ matrix.archtag }},mode=max
+          provenance: false
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    # 仅当三个架构全部构建成功才合并清单，避免 latest 缺 armv7 导致 armv7l 拉取报错
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute manifest sources and targets
+        id: m
+        run: |
+          repo="ghcr.io/${{ github.repository }}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "sources=$repo:latest-amd64 $repo:latest-arm64 $repo:latest-armv7" >> "$GITHUB_OUTPUT"
+            echo "targets=$repo:latest" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME}"
+            major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
+            echo "sources=$repo:${v}-amd64 $repo:${v}-arm64 $repo:${v}-armv7" >> "$GITHUB_OUTPUT"
+            echo "targets=$repo:${v} $repo:${major}.${minor}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sources=" >> "$GITHUB_OUTPUT"
+            echo "targets=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create multi-arch manifest list
+        if: steps.m.outputs.targets != ''
+        run: |
+          # buildx imagetools create 把三张单架构镜像合并成一张多架构清单；
+          # 多个 --tag 对应多个目标标签（latest / 版本号 / major.minor）。
+          args=()
+          for t in ${{ steps.m.outputs.targets }}; do
+            args+=(--tag "$t")
+          done
+          docker buildx imagetools create "${args[@]}" ${{ steps.m.outputs.sources }}
