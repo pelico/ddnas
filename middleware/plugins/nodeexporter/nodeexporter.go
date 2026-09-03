@@ -113,6 +113,7 @@ type systemInfo struct {
 	Kernel    string    `json:"kernel"`
 	Arch      string    `json:"arch"`
 	Uptime    float64   `json:"uptime_seconds"`
+	BootTime  float64   `json:"boot_time"`
 	CPU       cpuInfo   `json:"cpu"`
 	Memory    memInfo   `json:"memory"`
 	Disks     []fsInfo  `json:"disks"`
@@ -299,6 +300,7 @@ func parseSystem(text string) systemInfo {
 		Arch:     label(ms, "node_uname_info", "machine"),
 	}
 	info.Uptime = gauge(ms, "node_time_seconds") - gauge(ms, "node_boot_time_seconds")
+	info.BootTime = gauge(ms, "node_boot_time_seconds")
 	info.CPU = cpuInfo{
 		Cores:  countCPU(ms),
 		Load1:  gauge(ms, "node_load1"),

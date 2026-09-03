@@ -544,7 +544,16 @@ function renderNasCard(s){
   barEl.style.width=p.toFixed(1)+"%";
   const parts=[];if(s.os)parts.push(esc(s.os));if(s.arch)parts.push(esc(s.arch));if(s.kernel)parts.push(esc(String(s.kernel).slice(0,22)));
   const up=+s.uptime_seconds||0;const d=Math.floor(up/86400),h=Math.floor(up%86400/3600),m=Math.floor(up%3600/60);
-  parts.push("运行 "+(d?d+"天":"")+(h?h+"时":"")+m+"分");
+  const upStr="运行 "+(d?d+"天":"")+(h?h+"时":"")+m+"分";
+  // 开机时间：boot_time 是 epoch 秒，转可读 MM-DD HH:MM
+  const bt=+s.boot_time||0;
+  let bootStr="";
+  if(bt){
+    const bd=new Date(bt*1000);
+    const pad=function(n){return String(n).padStart(2,"0");};
+    bootStr="开机 "+pad(bd.getMonth()+1)+"-"+pad(bd.getDate())+" "+pad(bd.getHours())+":"+pad(bd.getMinutes());
+  }
+  parts.push(upStr+(bootStr?" · "+bootStr:""));
   descEl.textContent=parts.join(" · ")||"—";
 }
 
