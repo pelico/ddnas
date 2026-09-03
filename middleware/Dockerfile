@@ -18,10 +18,12 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
 # TARGETVARIANT 形如 "v7"，剥掉前缀得到 GOARM=7；非 arm 架构不设 GOARM。
+# echo 用于在 CI 日志里肉眼确认交叉编译目标架构（修 armv7l exec format error 调试用）。
 RUN set -eux; \
     case "${TARGETARCH}" in \
       arm) export GOARM="${TARGETVARIANT#v}"; [ -n "$GOARM" ] || export GOARM=7 ;; \
     esac; \
+    echo ">>> cross-compile target: GOOS=${GOOS} GOARCH=${GOARCH} GOARM=${GOARM:-}"; \
     go build -ldflags="-s -w" -trimpath -o /out/ddnas ./cmd/ddnas
 
 FROM alpine:3.20
