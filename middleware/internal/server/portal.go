@@ -674,8 +674,19 @@ function loadFiles(p){
 function goUp(){if(!curFiles)return;const i=curFiles.lastIndexOf("/");loadFiles(i<0?"":curFiles.slice(0,i));}
 function renderCrumb(p){
   const c=document.getElementById("crumb");
-  let h='<a onclick="loadFiles(\\'\\')">根</a>';
-  if(p){const segs=p.split("/");let acc="";segs.forEach((s,i)=>{acc=acc?acc+"/"+s:s;h+='<span class="sep">/</span><a onclick="loadFiles(\\''+escJS(acc)+'\\')">'+esc(s)+'</a>';});}
+  // onclick 属性值用双引号包裹，里面的 JS 字符串用单引号包裹，
+  // 单引号在 JS 单引号字符串里需转义为 \'。Go raw string 里 \' 就是反斜杠+单引号两字符，
+  // JS 解析为转义单引号。注意不能写成 \\' (两个反斜杠)，否则 JS 会把 \\ 当转义反斜杠，
+  // ' 提前结束字符串导致整段脚本语法错误。
+  let h="<a onclick=\"loadFiles('')\">根</a>";
+  if(p){
+    const segs=p.split("/");
+    let acc="";
+    segs.forEach(function(s){
+      acc=acc?acc+"/"+s:s;
+      h+="<span class=\"sep\">/</span><a onclick=\"loadFiles('"+escJS(acc)+"')\">"+esc(s)+"</a>";
+    });
+  }
   c.innerHTML=h;
 }
 function play(relPath){
