@@ -53,7 +53,8 @@ header .host{color:var(--muted);font-size:12px;margin-left:8px}
 </style>
 </head><body>
 <header><div class="row"><span class="brand">DDNAS</span><span class="host">{{.Host}}</span></div>
-<button class="fab" title="备份" onclick="ddnas.startBackup()">&#128190;</button></header>
+<div class="row"><a style="font-size:13px;color:var(--muted)" href="/admin/">← 控制台</a>
+<button class="fab" title="备份" onclick="ddnas.startBackup()">&#128190;</button></div></header>
 <nav class="tabs"><button id="tab-dev" class="on" onclick="showTab('dev')">设备</button><button id="tab-files" onclick="showTab('files')">文件</button></nav>
 
 <section id="view-dev" class="view">
@@ -143,7 +144,9 @@ function toast(m){const t=document.getElementById("toast");t.textContent=m;t.cla
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
 if(typeof ddnas==="undefined"){window.ddnas={playMedia:u=>alert("原生桥不可用，播放:\n"+u),startBackup:()=>alert("原生桥不可用，备份需 App 内启动")};}
-showTab("dev");
+(function(){
+  const q=new URLSearchParams(location.search);const t=q.get("tab");showTab(t==="files"?"files":"dev");
+})();
 </script>
 </body></html>`
 

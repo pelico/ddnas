@@ -43,7 +43,7 @@ button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted
 .hint{color:var(--muted);font-size:12px;margin-top:6px}
 </style>
 </head><body>
-<header><div class="brand">DDNAS</div><nav>{{if .Nav}}<a href="/admin/" {{if eq .Active "index"}}class="on"{{end}}>总览</a><a href="/admin/connection" {{if eq .Active "conn"}}class="on"{{end}}>App 连接</a>{{end}}</nav></header>
+<header><div class="brand">DDNAS</div><nav>{{if .Nav}}<a href="/admin/" {{if eq .Active "index"}}class="on"{{end}}>总览</a><a href="/portal" {{if eq .Active "portal"}}class="on"{{end}}>功能</a><a href="/admin/connection" {{if eq .Active "conn"}}class="on"{{end}}>App 连接</a>{{end}}</nav></header>
 <div class="wrap">{{block "content" .}}{{end}}</div>
 </body></html>{{end}}`
 
@@ -68,6 +68,11 @@ const loginSrc = `{{define "content"}}
 </form></div>{{end}}`
 
 const indexSrc = `{{define "content"}}
+<div class="card"><h2>功能</h2><div class="sub">启用对应适配器后即可使用。文件/播放/备份需启用 openlist；设备信息需启用 node。</div>
+<div class="list">
+<div class="item"><div><div>&#128421; 设备信息</div><div class="meta">主机、CPU、内存、磁盘、网络</div></div><div><a href="/portal?tab=dev">打开 →</a></div></div>
+<div class="item"><div><div>&#128193; 文件浏览与上传</div><div class="meta">目录浏览、上传、媒体播放（App 内调用原生播放器）</div></div><div><a href="/portal?tab=files">打开 →</a></div></div>
+</div></div>
 <div class="card"><h2>适配器总览</h2><div class="sub">点击进入各上游适配器配置。启用并填写参数后保存即热重载，无需重启容器。</div>
 <div class="list">{{range .Adapters}}
 <div class="item"><div><div>{{.Name}} <span class="badge {{if .Enabled}}on{{end}}">{{if .Enabled}}已启用{{else}}未启用{{end}}</span></div><div class="meta">{{.Capabilities}}</div></div><div><a href="/admin/adapter/{{.Name}}">配置 →</a></div></div>
