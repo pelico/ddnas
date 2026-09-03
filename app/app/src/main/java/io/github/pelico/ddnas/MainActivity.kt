@@ -6,10 +6,13 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,9 +66,13 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private val store by lazy { ServerStore(this) }
+    private val backupStore by lazy { io.github.pelico.ddnas.data.BackupStore(this) }
 
-    private lateinit var treePicker: androidx.activity.result.ActivityResultLauncher<Uri?>
-    private lateinit var notifPermission: androidx.activity.result.ActivityResultLauncher<String>
+    private lateinit var treePicker: ActivityResultLauncher<Uri?>
+    private lateinit var notifPermission: ActivityResultLauncher<String>
+    private lateinit var fileChooser: ActivityResultLauncher<String>
+    // WebView 文件选择回调，由 WebChromeClient.onShowFileChooser 设置
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,6 +82,11 @@ class MainActivity : ComponentActivity() {
         }
         notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) treePicker.launch(null)
+        }
+        // <input type="file"> 选择回调，portal 上传按钮需要
+        fileChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            filePathCallback?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+            filePathCallback = null
         }
 
         setContent {
@@ -133,6 +145,24 @@ class MainActivity : ComponentActivity() {
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = false
                         webViewClient = WebViewClient()
+                        // 让 portal 的 <input type="file"> 上传按钮可用
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onShowFileChooser(
+                                webView: WebView?,
+                                callback: ValueCallback<Array<Uri>>?,
+                                params: FileChooserParams?
+                            ): Boolean {
+                                filePathCallback?.onReceiveValue(null)
+                                filePathCallback = callback
+                                return try {
+                                    fileChooser.launch("*/*")
+                                    true
+                                } catch (e: Exception) {
+                                    filePathCallback = null
+                                    false
+                                }
+                            }
+                        }
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
@@ -239,6 +269,7 @@ class MainActivity : ComponentActivity() {
             is BackupService.Progress.Running -> "备份中：${progress.done}/${progress.total}\n${progress.current}"
             is BackupService.Progress.Done -> progress.message
             is BackupService.Progress.Error -> "备份出错：${progress.message}"
+            BackupService.Progress.Scanning -> "扫描文件中…"
             BackupService.Progress.Idle -> return
         }
         AlertDialog(
@@ -268,7 +299,13 @@ class MainActivity : ComponentActivity() {
                     notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     return@runOnUiThread
                 }
-                treePicker.launch(null)
+                // 已有备份目录：直接增量备份；否则首次选目录
+                val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+                if (cfg.treeUri.isNotEmpty()) {
+                    startBackupService(cfg.treeUri, cfg.remoteBase)
+                } else {
+                    treePicker.launch(null)
+                }
             }
         }
     }
@@ -297,14 +334,25 @@ class MainActivity : ComponentActivity() {
             )
         } catch (_: SecurityException) {
         }
+        // 持久化 treeUri，后续备份无需重选目录
+        val treeUriStr = treeUri.toString()
+        kotlinx.coroutines.runBlocking { backupStore.setTreeUri(treeUriStr) }
+        val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+        startBackupService(treeUriStr, cfg.remoteBase)
+    }
+
+    /** 启动备份前台服务，传入 treeUri/远程路径/cookie。 */
+    private fun startBackupService(treeUriStr: String, remoteBase: String) {
+        val active = currentServer() ?: return
         val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
         BackupService.reset()
         androidx.core.content.ContextCompat.startForegroundService(
             this,
             Intent(this, BackupService::class.java).apply {
-                putExtra(BackupService.EXTRA_TREE_URI, treeUri.toString())
+                putExtra(BackupService.EXTRA_TREE_URI, treeUriStr)
                 putExtra(BackupService.EXTRA_ORIGIN, active.url.trimEnd('/'))
                 putExtra(BackupService.EXTRA_COOKIE, cookie)
+                putExtra(BackupService.EXTRA_REMOTE_BASE, remoteBase)
             }
         )
     }

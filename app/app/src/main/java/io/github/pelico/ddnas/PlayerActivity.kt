@@ -2,9 +2,11 @@ package io.github.pelico.ddnas
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.view.WindowManager
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -19,15 +21,20 @@ import okhttp3.OkHttpClient
 /**
  * 流式播放：ExoPlayer 通过 OkHttp 拉取 /portal/api/openlist/files/stream/...，
  * 注入 WebView 登录后的 admin 会话 cookie，使 Range 请求同样鉴权。
+ * 支持横屏全屏切换（点按钮或旋转设备）。
  */
 class PlayerActivity : Activity() {
 
     private var player: ExoPlayer? = null
+    private lateinit var playerView: PlayerView
+    private var isFullscreen = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 播放期间保持屏幕常亮
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // 初始竖屏，用户可旋转设备或点全屏按钮切横屏
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
 
         val streamUrl = intent.getStringExtra(EXTRA_URL) ?: run { finish(); return }
         val host = intent.getStringExtra(EXTRA_HOST) ?: run { finish(); return }
@@ -36,11 +43,52 @@ class PlayerActivity : Activity() {
         Log.i(TAG, "start stream url=$streamUrl host=$host cookieLen=${cookie.length}")
 
         val client = buildAuthedClient(host, cookie)
-        val view = PlayerView(this).also { v ->
+        playerView = PlayerView(this).also { v ->
             v.useController = true
             v.player = newPlayer(client, streamUrl).also { player = it }
+            // 自定义全屏切换按钮
+            v.setFullscreenButtonClickListener { toggleFullscreen() }
         }
-        setContentView(view)
+        setContentView(playerView)
+    }
+
+    /** 全屏/退出全屏切换：横屏时隐藏系统栏 */
+    private fun toggleFullscreen() {
+        isFullscreen = !isFullscreen
+        if (isFullscreen) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            // 隐藏系统状态栏和导航栏，真正全屏
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            )
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
+
+    /** 设备旋转时如果 configChanges 声明了 orientation 则走此回调 */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 横屏自动进入全屏，竖屏退出
+        isFullscreen = newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (isFullscreen) {
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            )
+        } else {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
     }
 
     private fun buildAuthedClient(host: String, cookie: String): OkHttpClient {

@@ -2,7 +2,6 @@ package io.github.pelico.ddnas
 
 import android.app.Notification
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
@@ -10,6 +9,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
+import io.github.pelico.ddnas.data.BackupManifest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,13 +20,13 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import java.io.InputStream
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
- * 备份前台服务：遍历 SAF 选择的目录树，逐文件上传到中间件
+ * 备份前台服务：遍历 SAF 选择的目录树，增量上传到中间件
  * /portal/api/openlist/files/upload?path=<远程相对路径>，携带 admin 会话 cookie。
+ *
+ * 增量策略：BackupManifest 记录每个文件上次上传的 size+mtime，
+ * 未变更的文件跳过，只传新增/修改的文件。
  *
  * 进度通过 [progress] StateFlow 暴露，UI（MainActivity）观察并展示。
  */
@@ -34,6 +34,7 @@ class BackupService : Service() {
 
     private val app: DdnasApplication get() = application as DdnasApplication
     private val client: OkHttpClient get() = app.okHttpClient
+    private val manifest by lazy { BackupManifest(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -41,11 +42,10 @@ class BackupService : Service() {
         val treeUri = intent?.getStringExtra(EXTRA_TREE_URI)
         val origin = intent?.getStringExtra(EXTRA_ORIGIN)
         if (treeUri == null || origin == null) {
-            stopSelf(); return START_NOT_STICKY
+            _progress.value = Progress.Error("缺少备份参数"); stopSelf(); return START_NOT_STICKY
         }
         val cookie = intent.getStringExtra(EXTRA_COOKIE) ?: ""
-        val remoteBase = intent.getStringExtra(EXTRA_REMOTE_BASE)
-            ?: "/手机备份/${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())}"
+        val remoteBase = intent.getStringExtra(EXTRA_REMOTE_BASE) ?: "/手机备份"
 
         startForegroundCompat(NOTIF_ID, buildNotification("准备备份…", 0, 0))
         app.appScope.launch { runBackup(Uri.parse(treeUri), origin, cookie, remoteBase) }
@@ -54,25 +54,69 @@ class BackupService : Service() {
 
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
         try {
+            // 持久化 SAF 权限，避免重启后失效
+            try {
+                contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) { }
+
             val root = DocumentFile.fromTreeUri(this, treeUri) ?: run {
                 _progress.value = Progress.Error("无法访问所选目录"); return
             }
-            val files = ArrayList<Pair<DocumentFile, String>>()
-            collect(root, "", files)
-            val total = files.size
-            if (total == 0) { _progress.value = Progress.Done("目录为空，无文件可备份"); return }
-            _progress.value = Progress.Running(0, total, files.first().first.name ?: "")
+            if (!root.isDirectory) {
+                _progress.value = Progress.Error("所选路径不是目录"); return
+            }
+
+            _progress.value = Progress.Scanning
+            val all = ArrayList<Pair<DocumentFile, String>>()
+            collect(root, "", all)
+
+            // 增量过滤：只保留需要上传的文件
+            val toUpload = ArrayList<Pair<DocumentFile, String>>()
+            var skipped = 0
+            for ((file, rel) in all) {
+                val size = file.length()
+                val mtime = file.lastModified()
+                if (manifest.needUpload(rel, size, mtime)) {
+                    toUpload.add(file to rel)
+                } else {
+                    skipped++
+                }
+            }
+
+            val total = toUpload.size
+            if (total == 0) {
+                _progress.value = Progress.Done("无需备份（$skipped 个文件未变更）")
+                return
+            }
+
+            _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0
             var failed = 0
-            for ((file, rel) in files) {
+            for ((file, rel) in toUpload) {
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                val ok = try { uploadFile(origin, cookie, dest, file) } catch (e: Exception) { false }
-                if (!ok) failed++
+                val ok = try {
+                    uploadFile(origin, cookie, dest, file)
+                } catch (e: Exception) {
+                    Log_w("upload fail: $rel", e); false
+                }
+                if (ok) {
+                    manifest.markUploaded(rel, file.length(), file.lastModified())
+                } else {
+                    failed++
+                }
                 done++
                 _progress.value = Progress.Running(done, total, file.name ?: rel)
                 startForegroundCompat(NOTIF_ID, buildNotification("备份中", done, total))
             }
-            _progress.value = Progress.Done(if (failed == 0) "备份完成：$done 个文件" else "备份完成：成功 ${done - failed} 失败 $failed")
+            val msg = buildString {
+                append("备份完成：上传 $done 个文件")
+                if (skipped > 0) append("，跳过 $skipped 个未变更")
+                if (failed > 0) append("，失败 $failed 个")
+            }
+            _progress.value = Progress.Done(msg)
         } catch (e: Exception) {
             _progress.value = Progress.Error(e.message ?: "备份失败")
         } finally {
@@ -131,8 +175,14 @@ class BackupService : Service() {
         }
     }
 
+    // Log_w 包装，避免 import android.util.Log（保持文件简洁）
+    private fun Log_w(msg: String, e: Exception) {
+        android.util.Log.w("DDNAS-Backup", msg, e)
+    }
+
     sealed interface Progress {
         data object Idle : Progress
+        data object Scanning : Progress
         data class Running(val done: Int, val total: Int, val current: String) : Progress
         data class Done(val message: String) : Progress
         data class Error(val message: String) : Progress
