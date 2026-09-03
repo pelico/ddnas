@@ -67,6 +67,54 @@ func (a *Adapter) Routes() []plugin.Route {
 	}
 }
 
+// Test 以临时 client 探测 OpenList/AList：调用 /api/fs/list(path=root)，
+// 解析 {code,message}，code==200 视为成功，否则展示错误提示；含耗时。
+func (a *Adapter) Test(raw map[string]any) plugin.TestResult {
+	endpoint := strings.TrimSpace(strField(raw, "endpoint", ""))
+	token := strField(raw, "token", "")
+	root := strField(raw, "root", "/")
+	if root == "" {
+		root = "/"
+	}
+	if endpoint == "" {
+		return plugin.TestResult{Ok: false, Info: "未填写 OpenList/AList 地址"}
+	}
+	client := &http.Client{Timeout: 8 * time.Second}
+	start := time.Now()
+	body := map[string]any{"path": root, "page": 1, "per_page": 1, "refresh": false}
+	buf, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", strings.TrimRight(endpoint, "/")+"/api/fs/list", strings.NewReader(string(buf)))
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "构造请求失败：" + err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", token)
+	}
+	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "连接失败：" + err.Error() + "（" + elapsed.Round(time.Millisecond).String() + "）"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return plugin.TestResult{Ok: false, Info: "HTTP " + resp.Status + "（" + elapsed.Round(time.Millisecond).String() + "），请检查地址或令牌权限"}
+	}
+	var out struct {
+		Code int    `json:"code"`
+		Msg  string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&out)
+	if out.Code != 200 {
+		msg := out.Msg
+		if msg == "" {
+			msg = "返回码 " + fmt.Sprint(out.Code)
+		}
+		return plugin.TestResult{Ok: false, Info: "OpenList/AList 错误：" + msg + "（" + elapsed.Round(time.Millisecond).String() + "）"}
+	}
+	return plugin.TestResult{Ok: true, Info: "成功：" + elapsed.Round(time.Millisecond).String() + " · 目录 " + root + " 可达"}
+}
+
 func (a *Adapter) Close() error { return nil }
 
 // joinPath 拼接 root 与相对路径。

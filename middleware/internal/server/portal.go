@@ -268,7 +268,11 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           <div style="height:10px"></div>
           <div style="font-size:12px;opacity:.85" id="d-desc">家庭私有云 · 中间件 v1</div>
         </div>
-        <div class="device-art">🖴</div>
+        <div style="text-align:right">
+          <div class="device-art">🖴</div>
+          <div style="font-size:11px;margin-top:2px;opacity:.9" id="d-stat">初始化中…</div>
+          <button id="d-refresh" style="font-size:11px;color:#fff;opacity:.9;background:rgba(255,255,255,.18);border-radius:999px;padding:2px 8px;margin-top:6px;display:none" onclick="forceRefreshSystem()">↻ 立即刷新</button>
+        </div>
       </div>
       <div class="nas-usage">
         <div class="usage-bar"><i id="d-usage-bar"></i></div>
@@ -455,32 +459,77 @@ function mCardHTML(opts){
 async function loadHome(){
   homeLoaded=false;  // 每次切到首页都重拉一次初始
   // 1) 发现适配器能力
-  const capList=[];
   try{
     const r=await fetch("/portal/api/adapters_discovery");
-    if(r.ok){const s=await r.json();(s.adapters||[]).forEach(a=>{if(a.enabled&&Array.isArray(a.capabilities))a.capabilities.forEach(c=>caps.add(c));capList.push(s);});}
+    if(r.ok){const s=await r.json();(s.adapters||[]).forEach(a=>{if(a.enabled&&Array.isArray(a.capabilities))a.capabilities.forEach(function(c){caps.add(c);});});}
   }catch(e){}
   renderGrid();
 
   // 2) 系统信息立即拉一次 + 10s 轮询
-  const doLoad=async ()=>{
+  const doLoad=async (manual)=>{
     const box=document.getElementById("monitor-grid");
+    setStat("loading",manual?"手动刷新中…":"连接中…");
     try{
-      const r=await fetch("/portal/api/node/system");
+      const t0=Date.now();
+      const r=await fetch("/portal/api/node/system",{cache:"no-store"});
       if(!r.ok)throw new Error("HTTP "+r.status);
       sys=await r.json();
       homeLoaded=true;
       renderNasCard(sys);
       renderMonitor(sys);
+      const ms=Date.now()-t0;
+      setStat("ok","已连接 · "+ms+"ms"+(manual?"（手动）":""));
     }catch(e){
       homeLoaded=true;
       renderNasCard(null);
-      box.innerHTML='<div class="tip-card">未启用 node 适配器或获取失败：'+esc(e.message)+'<br><a href="/admin/adapter/node" style="color:var(--accent)">前往配置 -></a></div>';
+      // 保持 4 张监控卡骨架，展示错误摘要与「前往配置」入口，用户能一眼定位到问题
+      box.innerHTML=
+        monitorEmpty("CPU",e.message)+
+        monitorEmpty("内存",e.message)+
+        monitorEmpty("网络",e.message)+
+        monitorEmpty("硬盘",e.message)+
+        '<div style="grid-column:1/-1;margin-top:4px" class="tip-card">'+
+          '无法获取设备信息（'+esc(e.message)+'）<br>'+
+          '可能原因：<b>node 适配器未启用</b> / 内网地址填错 / 容器与 node_exporter 不通 / 服务未启动。<br>'+
+          '<a href="/admin/adapter/node" style="color:var(--accent)">🧪 到控制台先点「测试连接」排查</a>'+
+        '</div>';
+      setStat("err","未连接："+e.message);
     }
   };
-  await doLoad();
+  await doLoad(false);
   if(pollTimer)clearInterval(pollTimer);
-  pollTimer=setInterval(doLoad,10000);
+  pollTimer=setInterval(function(){doLoad(false);},10000);
+}
+let lastStat={mode:"",text:"",ts:0};
+function setStat(mode,text){
+  var el=document.getElementById("d-stat");if(!el)return;
+  var rf=document.getElementById("d-refresh");if(rf)rf.style.display="inline-block";
+  var mark=mode==="ok"?"🟢":mode==="err"?"🔴":"🟡";
+  el.textContent=mark+" "+text;
+  lastStat={mode:mode,text:text,ts:Date.now()};
+}
+function forceRefreshSystem(){
+  if(!window.__doLoad){
+    // 懒注入：重新进入首页就会在 doLoad 闭包外没法重入；这里直接重跑一次 fetch
+    var el=document.getElementById("d-stat");if(el)el.textContent="🟡 刷新中…";
+    fetch("/portal/api/node/system",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}).then(function(s){
+      sys=s;renderNasCard(s);renderMonitor(s);setStat("ok","已连接 · 手动刷新");
+    }).catch(function(e){renderNasCard(null);setStat("err","刷新失败："+e.message);});
+    return;
+  }
+  window.__doLoad(true);
+}
+function monitorEmpty(title,reason){
+  // 占位监控卡：左侧灰色空环，右侧展示"—"；保持 2x2 网格稳定，不会从"4 卡"忽然变"1 条错误"页面跳动
+  return '<div class="m-card">'+
+    '<div class="title err"><span class="dot"></span>'+esc(title)+'</div>'+
+    '<div class="row">'+
+      '<div><div class="ring" style="--p:0"></div></div>'+
+      '<div class="m-kv">'+
+        '<span class="k">状态</span><span class="v">—</span>'+
+        '<span class="k">数值</span><span class="v">—</span>'+
+      '</div>'+
+    '</div></div>';
 }
 
 /* NAS 卡片渲染：从 disks 汇总总容量，用 hostname/os 拼接展示 */

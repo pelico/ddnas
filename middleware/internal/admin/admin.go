@@ -6,6 +6,7 @@ package admin
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -43,8 +44,24 @@ func (a *Admin) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/logout", a.handleLogout)
 	mux.HandleFunc("GET /admin/adapter/{name}", a.handleAdapter)
 	mux.HandleFunc("POST /admin/adapter/{name}", a.handleAdapter)
+	// POST /admin/api/test/:name：适配器配置页"测试连接"按钮 AJAX 调用，无需先保存。
+	// Body 为当前表单 x-www-form-urlencoded，按 ConfigSchema 组装 raw 后直接调 Adapter.Test 探测。
+	mux.HandleFunc("POST /admin/api/test/{name}", a.authedHTML(a.handleAdapterTest))
 	mux.HandleFunc("GET /admin/connection", a.handleConnection)
 	mux.HandleFunc("GET /", a.handleRoot) // 根路径跳转
+}
+
+// authedHTML 仅用于控制台内 AJAX/表单：要求 admin 会话 cookie，否则 401 JSON。
+func (a *Admin) authedHTML(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.store.Configured() || !a.loggedIn(r) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"ok":false,"info":"未登录，请先登录控制台"}`))
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (a *Admin) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +174,40 @@ func (a *Admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- adapter config ---
+
+// handleAdapterTest 解析 adapter 表单（与 handleAdapter POST 相同的解析逻辑），
+// 调用 ad.Test(raw) 返回 plugin.TestResult JSON，供配置页即时显示绿灯/红灯与详情。
+func (a *Admin) handleAdapterTest(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	name := r.PathValue("name")
+	var ad plugin.Adapter
+	for _, x := range a.adapters {
+		if x.Name() == name {
+			ad = x
+			break
+		}
+	}
+	if ad == nil {
+		writeJSON(w, http.StatusNotFound, plugin.TestResult{Ok: false, Info: "未知适配器：" + name})
+		return
+	}
+	raw := map[string]any{}
+	for _, fld := range ad.ConfigSchema() {
+		if fld.Type == plugin.FieldBool {
+			raw[fld.Key] = r.FormValue(fld.Key) == "on"
+		} else {
+			raw[fld.Key] = r.FormValue(fld.Key)
+		}
+	}
+	res := ad.Test(raw)
+	writeJSON(w, http.StatusOK, res)
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
 
 func (a *Admin) handleAdapter(w http.ResponseWriter, r *http.Request) {
 	if !a.store.Configured() || !a.loggedIn(r) {

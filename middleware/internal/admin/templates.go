@@ -87,16 +87,45 @@ const adapterSrc = `{{define "content"}}
 <div class="card"><h2>{{.Name}} 配置</h2><div class="sub">{{.Capabilities}}</div>
 {{if .Saved}}<div class="alert ok">已保存并热重载。</div>{{end}}
 {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
-<form method="POST" action="/admin/adapter/{{.Name}}">{{range .Fields}}
+<form id="cfg-form" method="POST" action="/admin/adapter/{{.Name}}">{{range .Fields}}
 <label>{{.Label}}{{if .Required}} *{{end}}</label>
 {{if eq .Type "bool"}}<div class="row"><input type="checkbox" name="{{.Key}}" {{if .Value}}checked{{end}}></div>
 {{else if eq .Type "textarea"}}<textarea name="{{.Key}}" placeholder="{{.Placeholder}}">{{.Value}}</textarea>
 {{else}}<input name="{{.Key}}" type="{{.Type}}" placeholder="{{.Placeholder}}" value="{{.Value}}">{{end}}
 {{if .Help}}<div class="hint">{{.Help}}</div>{{end}}
 {{end}}
+<div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
 <button type="submit">保存并重载</button>
+<button type="button" class="ghost" id="btn-test" style="background:#252832;color:var(--fg);border:1px solid var(--bd)">🧪 测试连接</button>
 <a href="/admin/"><button type="button" class="ghost">返回</button></a>
-</form></div>{{end}}`
+</div>
+<div id="test-result" style="margin-top:14px;display:none"></div>
+</form></div>
+<script>
+(function(){
+  var btn=document.getElementById("btn-test");if(!btn)return;
+  var box=document.getElementById("test-result");
+  btn.addEventListener("click",function(){
+    var f=document.getElementById("cfg-form");
+    var fd=new FormData(f);
+    var body=new URLSearchParams(fd).toString();
+    btn.disabled=true;btn.style.opacity=".6";box.style.display="block";
+    box.innerHTML='<div class="hint" style="padding:10px 12px;border-radius:8px;background:#252832">⏳ 正在探测…</div>';
+    fetch("/admin/api/test/{{.Name}}",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body,credentials:"same-origin"})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var ok=!!j.ok;
+        box.innerHTML='<div style="padding:12px 14px;border-radius:10px;border:1px solid '+(ok?'#1f3d2e':'#4a3520')+';background:'+(ok?'#122418':'#2a1d12')+';color:'+(ok?'#3ecf8e':'#f5a623')+'">'+
+          '<div style="display:flex;align-items:center;gap:8px;font-weight:600">'+(ok?'✅ 连接正常':'❌ 连接失败')+'</div>'+
+          '<div style="margin-top:6px;opacity:.9;font-size:13px;white-space:pre-wrap;word-break:break-all">'+(j.info||"")+'</div>'+
+          (!ok?'<div style="margin-top:6px;opacity:.85;font-size:12px">💡 常见原因：内网地址不在 Docker 网段、防火墙未放通、令牌不对、服务未启动。建议从容器内 curl 一下对应地址确认。</div>':"")+
+          '</div>';
+      })
+      .catch(function(e){box.innerHTML='<div class="alert">请求失败：'+e.message+'</div>';})
+      .finally(function(){btn.disabled=false;btn.style.opacity="1";});
+  });
+})();
+</script>{{end}}`
 
 const connectionSrc = `{{define "content"}}
 <div class="card"><h2>App 连接信息</h2><div class="sub">在 Android App 中填入以下信息连接本中间件。</div>

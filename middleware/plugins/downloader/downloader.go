@@ -5,6 +5,8 @@ package downloader
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/pelico/ddnas/middleware/internal/plugin"
 )
@@ -36,6 +38,29 @@ func (a *Adapter) Init(raw map[string]any) error {
 	a.endpoint = strField(raw, "endpoint", "")
 	a.rpcToken = strField(raw, "token", "")
 	return nil
+}
+
+// Test 下载器适配器：占位实现，仅尝试 HEAD endpoint 判断 HTTP 是否可达。
+// 真实类型（aria2/qbittorrent/...）上线后替换为对应 RPC 探测。
+func (a *Adapter) Test(raw map[string]any) plugin.TestResult {
+	typ := strings.TrimSpace(strField(raw, "type", ""))
+	endpoint := strings.TrimSpace(strField(raw, "endpoint", ""))
+	if endpoint == "" {
+		return plugin.TestResult{Ok: false, Info: "未填写 RPC 地址"}
+	}
+	if typ == "" {
+		return plugin.TestResult{Ok: false, Info: "请先选择下载器类型（aria2 / qbittorrent / transmission）"}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	start := time.Now()
+	req, _ := http.NewRequest("GET", endpoint, nil)
+	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "连接失败：" + err.Error() + "（" + elapsed.Round(time.Millisecond).String() + "）"}
+	}
+	defer resp.Body.Close()
+	return plugin.TestResult{Ok: true, Info: "可达（占位探测）：HTTP " + resp.Status + " · 类型 " + typ + " · " + elapsed.Round(time.Millisecond).String() + " · 真实 RPC 校验待后续接入"}
 }
 
 func (a *Adapter) Routes() []plugin.Route {

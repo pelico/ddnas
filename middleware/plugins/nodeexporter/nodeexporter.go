@@ -47,6 +47,52 @@ func (a *Adapter) Routes() []plugin.Route {
 	}
 }
 
+// Test 发起一次实时 /metrics 探测：检查 200 OK + 文本以 `# HELP` 开头，并抽取 node_exporter_build_info
+// 的 version 标签展示，给出清晰的成功/失败提示（含耗时/错误）。
+func (a *Adapter) Test(raw map[string]any) plugin.TestResult {
+	endpoint := strField(raw, "endpoint", "http://127.0.0.1:9100")
+	if endpoint == "" {
+		return plugin.TestResult{Ok: false, Info: "未填写 node_exporter 地址"}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	start := time.Now()
+	req, err := http.NewRequest("GET", strings.TrimRight(endpoint, "/")+"/metrics", nil)
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "构造请求失败：" + err.Error()}
+	}
+	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "连接失败：" + err.Error() + "（" + elapsed.Round(time.Millisecond).String() + "）"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return plugin.TestResult{Ok: false, Info: "HTTP " + resp.Status + "（" + elapsed.Round(time.Millisecond).String() + "）"}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	if err != nil {
+		return plugin.TestResult{Ok: false, Info: "读取响应失败：" + err.Error()}
+	}
+	text := string(body)
+	version := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "node_exporter_build_info") {
+			_, labels, _, ok := parseLine(line)
+			if ok {
+				if v, exist := labels["version"]; exist {
+					version = v
+				}
+				break
+			}
+		}
+	}
+	msg := "成功：" + elapsed.Round(time.Millisecond).String()
+	if version != "" {
+		msg += " · node_exporter " + version
+	}
+	return plugin.TestResult{Ok: true, Info: msg}
+}
+
 func (a *Adapter) Close() error { return nil }
 
 // --- 设备信息结构 ---

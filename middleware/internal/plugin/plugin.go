@@ -36,6 +36,13 @@ type Route struct {
 	Handler http.HandlerFunc
 }
 
+// TestResult 是适配器"测试连接"的返回结构。
+// UI 会根据 Ok 显示绿灯/红灯，并展示 Info 作为诊断信息（如版本号/返回的 HTTP 状态/耗时）。
+type TestResult struct {
+	Ok   bool   `json:"ok"`
+	Info string `json:"info"` // 人类可读提示，如 "成功：node_exporter build 0.27.1 · 28ms" 或 "失败：拨号超时 192.168.1.10:9100"
+}
+
 // Adapter 适配器插件接口。
 type Adapter interface {
 	// Name 唯一标识，用作路由前缀与配置段键名（如 "openlist"）。
@@ -46,6 +53,9 @@ type Adapter interface {
 	ConfigSchema() []ConfigField
 	// Init 用配置段初始化。raw 为该 adapter 的配置 map；enabled 由调用方在调用前判断。
 	Init(raw map[string]any) error
+	// Test 用配置段发起一次真实的探测（无需影响现有 Init 状态），返回连接是否可用与详细提示。
+	// Admin 控制台的"测试连接"按钮直接调用此方法，用于"配完立刻知道通不通"的即时反馈。
+	Test(raw map[string]any) TestResult
 	// Routes 返回对外暴露的子路由；未启用时返回 nil。
 	Routes() []Route
 	// Close 释放资源。
