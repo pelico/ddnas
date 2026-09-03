@@ -258,7 +258,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <div class="nas-card">
       <div class="nas-title" style="flex-direction:column;align-items:stretch;gap:6px">
         <div class="txt" style="display:flex;align-items:center;gap:8px;width:100%">
-          <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
+          <span class="mod" id="d-model">—</span><span class="tag" id="d-net">内网</span>
           <span style="flex:1;min-width:8px"></span>
           <span style="font-size:11px;opacity:.85;white-space:nowrap;text-align:right;overflow:hidden;text-overflow:ellipsis;flex-shrink:0" id="d-stat">初始化中…</span>
           <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center;flex-shrink:0" onclick="forceRefreshSystem()">↻</button>
@@ -399,6 +399,34 @@ function fmtBytes(v){v=+v||0;const u=["B","KB","MB","GB","TB","PB"];let i=0;whil
 function pct(v){return Math.max(0,Math.min(100,+v||0)).toFixed(1)+"%";}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1800);}
 function joinPath(base,name){base=base||"";name=name||"";if(!base)return name;return base.replace(/\/+$/,"")+"/"+name.replace(/^\/+/,"");}
+/* 取用户访问中间件用的 IP/主机名（即 NAS 在局域网的入口地址）。
+   用 hostname 而非 host，省去端口后缀，更紧凑。 */
+function lanIP(){
+  var h=location.hostname||"";
+  return h||"—";
+}
+/* 判断 IP 是否私有段（RFC1918 + 链路本地 + 环回）。
+   用于 d-net tag 真实展示内网/外网，替代硬编码 isWan=false。 */
+function isPrivateIP(ip){
+  if(!ip)return true;
+  if(ip==="localhost"||/^\d+\.\d+\.\d+\.\d+$/.test(ip)===false){
+    // 主机名（非纯 IP）：默认按内网处理（DNS 域名多在局域网内）
+    return true;
+  }
+  var p=ip.split(".").map(Number);
+  if(p.length!==4||p.some(n=>isNaN(n)))return true;
+  // 10.0.0.0/8
+  if(p[0]===10)return true;
+  // 172.16.0.0/12
+  if(p[0]===172&&p[1]>=16&&p[1]<=31)return true;
+  // 192.168.0.0/16
+  if(p[0]===192&&p[1]===168)return true;
+  // 127.0.0.0/8 环回
+  if(p[0]===127)return true;
+  // 169.254.0.0/16 链路本地
+  if(p[0]===169&&p[1]===254)return true;
+  return false;
+}
 function mediaExt(name){const ext=(String(name||"").split(".").pop()||"").toLowerCase();
   if(/^(mp4|mkv|mov|avi|webm|m4v|ts|m3u8|wmv|flv|rmvb)$/.test(ext))return"video";
   if(/^(mp3|flac|aac|m4a|wav|ogg|ape|wma)$/.test(ext))return"audio";
@@ -619,14 +647,14 @@ function renderNasCard(s){
   const barEl=document.getElementById("d-usage-bar");
   const descEl=document.getElementById("d-desc");
   if(!s){
-    modelEl.textContent="DDNAS";netEl.textContent="未连接";
+    modelEl.textContent=lanIP();netEl.textContent=isPrivateIP(lanIP())?"内网":"外网";
     usedEl.textContent="-";totalEl.textContent="-";freeEl.textContent="-";barEl.style.width="0%";
     descEl.textContent="启用并配置 node 适配器后显示设备信息";
     return;
   }
-  // d-model 固定显示 DDNAS，不再用 hostname（node_exporter 主机名无意义）
-  modelEl.textContent="DDNAS";
-  const isWan=false;netEl.textContent=isWan?"外网":"内网";
+  // d-model 显示当前访问中间件用的 IP（即 NAS 在局域网的入口地址）
+  modelEl.textContent=lanIP();
+  netEl.textContent=isPrivateIP(lanIP())?"内网":"外网";
   // 取容量最大的磁盘作为主盘展示（后端已过滤 tmpfs/overlay 等虚拟 FS）
   let mainDisk=null;
   (s.disks||[]).forEach(d=>{if(!mainDisk||+d.total_bytes>+mainDisk.total_bytes)mainDisk=d;});
