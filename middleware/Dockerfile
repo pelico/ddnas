@@ -27,12 +27,16 @@ RUN set -eux; \
     go build -ldflags="-s -w" -trimpath -o /out/ddnas ./cmd/ddnas
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata && \
+# su-exec：alpine 的 setuid 降权工具，供 entrypoint 从 root 降到运行用户。
+RUN apk add --no-cache ca-certificates tzdata su-exec && \
     adduser -D -u 1000 ddnas && mkdir -p /data && chown -R ddnas:ddnas /data
 WORKDIR /app
 COPY --from=build /out/ddnas /app/ddnas
-USER ddnas
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 ENV DDNAS_DATA_DIR=/data DDNAS_ADDR=:8080 TZ=Asia/Shanghai
 EXPOSE 8080
 VOLUME ["/data"]
-ENTRYPOINT ["/app/ddnas"]
+# 以 root 启动 entrypoint：自动 chown bind-mount 的 /data 后降权到 ddnas(默认)；
+# 可用 -e PUID= / -e PGID= 覆盖运行用户以匹配 NAS 账号。见 entrypoint.sh。
+ENTRYPOINT ["/entrypoint.sh"]
