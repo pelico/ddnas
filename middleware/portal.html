@@ -630,7 +630,9 @@ function loadFiles(p){
       var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
       var btn=(kind==="video"||kind==="audio")
         ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-type="play">播放</button>'
-        :'<button class="fbtn" data-type="noop">查看</button>';
+        :(kind==="image"
+          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-type="view">查看</button>'
+          :'<button class="fbtn" data-type="noop">查看</button>');
       return '<div class="fitem" data-type="file">'+
         '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
     }).join("")+"</div>";
@@ -647,6 +649,11 @@ function loadFiles(p){
     body.querySelectorAll('button[data-type="play"]').forEach(b=>{
       b.addEventListener("click",e=>{
         e.stopPropagation();play(b.dataset.rel||"");
+      });
+    });
+    body.querySelectorAll('button[data-type="view"]').forEach(b=>{
+      b.addEventListener("click",e=>{
+        e.stopPropagation();viewImage(b.dataset.rel||"");
       });
     });
   }).catch(function(e){
@@ -736,6 +743,57 @@ function openVideoPlayer(url,title){
   ov.appendChild(bar);ov.appendChild(v);
   document.body.appendChild(ov);
   v.play().catch(function(){});
+}
+function viewImage(relPath){
+  if(!relPath)return;
+  // 与 play 复用同一 stream 代理：浏览器 img 直接加载即可
+  const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
+  const name=relPath.split("/").pop()||"图片";
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column";
+  var img=document.createElement("img");
+  img.src=url;
+  img.style.cssText="max-width:100%;max-height:90vh;width:auto;height:auto;object-fit:contain";
+  img.addEventListener("error",function(){
+    img.style.display="none";
+    // 同视频：fetch 探测失败原因，显示状态码/Content-Type/响应体
+    fetch(url,{method:"GET",credentials:"include"}).then(function(r){
+      var ct=r.headers.get("Content-Type")||"—";
+      var cl=r.headers.get("Content-Length")||"—";
+      var bodyText="";
+      if(r.status>=400||!/image|application\/octet-stream/.test(ct)){
+        return r.text().then(function(t){bodyText=(t||"").slice(0,300);}).catch(function(){}).then(function(){
+          showDiag(r.status,ct,cl,bodyText);
+        });
+      }
+      showDiag(r.status,ct,cl,bodyText);
+    }).catch(function(e){
+      showDiag("—","—","—","fetch 失败："+(e&&e.message||e));
+    });
+    function showDiag(status,ct,cl,body){
+      var msg=document.createElement("div");
+      msg.style.cssText="color:#f5a623;text-align:center;padding:20px;max-width:460px;font-size:13px;line-height:1.6";
+      msg.innerHTML="<p style='font-size:15px;margin:0 0 8px'>无法加载此图片</p>"+
+        "<p style='opacity:.7;word-break:break-all;margin:0 0 10px'>"+esc(url)+"</p>"+
+        "<p style='opacity:.85;text-align:left;background:rgba(255,255,255,.06);padding:10px;border-radius:8px;font-family:monospace;font-size:12px'>"+
+        "HTTP 状态：<b style='color:#fff'>"+esc(status)+"</b><br>"+
+        "Content-Type：<b style='color:#fff'>"+esc(ct)+"</b><br>"+
+        "Content-Length：<b style='color:#fff'>"+esc(cl)+"</b>"+
+        (body?"<br>响应体：<span style='color:#fff;word-break:break-all'>"+esc(body)+"</span>":"")+
+        "</p>";
+      ov.appendChild(msg);
+    }
+  });
+  var bar=document.createElement("div");
+  bar.style.cssText="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent)";
+  var t=document.createElement("span");
+  t.textContent=name;t.style.cssText="color:#fff;font-size:14px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+  var c=document.createElement("button");
+  c.textContent="\u2715";c.style.cssText="color:#fff;background:rgba(255,255,255,.2);border:none;width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer";
+  c.onclick=function(){ov.remove();};
+  bar.appendChild(t);bar.appendChild(c);
+  ov.appendChild(bar);ov.appendChild(img);
+  document.body.appendChild(ov);
 }
 async function upload(input){
   const f=input.files&&input.files[0];if(!f)return;
