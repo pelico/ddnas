@@ -73,6 +73,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var fileChooser: ActivityResultLauncher<String>
     // WebView 文件选择回调，由 WebChromeClient.onShowFileChooser 设置
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    // 系统返回/侧滑返回处理入口：先 WebView 历史 → 再 H5 路由 → 最后 finish
+    // 需要持有 PortalWebView 实例，因此在 AndroidView factory 创建时回填。
+    private var portalWebView: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,6 +101,34 @@ class MainActivity : ComponentActivity() {
             filePathCallback?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
             filePathCallback = null
         }
+
+        // 系统返回/侧滑返回：先 WebView 历史，再 H5 内部路由（文件页层级/切Tab），最后 finish()
+        // 避免"在深层目录里滑一下就退到桌面"的割裂体验。
+        onBackPressedDispatcher.addCallback(this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val wv = portalWebView
+                    if (wv != null && wv.canGoBack()) {
+                        wv.goBack()
+                        return
+                    }
+                    // 先问 H5 __onNativeBack 能不能在内部消耗（文件页 goUp / 切首页 / 关弹层）
+                    if (wv != null) {
+                        var consumed = false
+                        wv.evaluateJavascript(
+                            "(function(){try{return __onNativeBack();}catch(e){return 'not_handled';}})()"
+                        ) { result ->
+                            val r = result?.trim('"') ?: "not_handled"
+                            if (r == "handled") return@evaluateJavascript
+                            // H5 也没有可消费的 → 退出 Activity
+                            finish()
+                        }
+                        return
+                    }
+                    finish()
+                }
+            }
+        )
 
         setContent {
             DDNASTheme { AppRoot() }
@@ -178,9 +209,13 @@ class MainActivity : ComponentActivity() {
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
                         loadUrl(server.url.trimEnd('/') + "/portal")
+                        // 系统返回键要拿 WebView 实例：onBackPressedDispatcher 回调里用
+                        portalWebView = this
                     }
                 },
                 update = { wv ->
+                    // 重建/更新时保持 Activity 级引用同步
+                    portalWebView = wv
                     // BackupService 进度变化时，推送到 portal 备份面板内嵌显示。
                     // Idle 不推送（避免覆盖面板默认状态）。
                     if (backupProgress !is BackupService.Progress.Idle) {

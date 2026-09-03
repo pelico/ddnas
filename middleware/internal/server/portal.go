@@ -153,13 +153,16 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   position:sticky;top:0;z-index:9;background:var(--bg);padding:10px 14px 12px;
   display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd);
 }
-.file-top{display:flex;align-items:center;gap:10px}
-.file-top .back{width:34px;height:34px;border-radius:10px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:16px}
-.file-top .path{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.file-top .up{background:var(--accent);color:#fff;border-radius:10px;padding:8px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
-.crumb{display:flex;flex-wrap:wrap;gap:2px 4px;color:var(--muted);font-size:12px;overflow-x:auto}
-.crumb a{color:var(--accent);white-space:nowrap}
-.crumb .sep{color:var(--muted2)}
+.file-top{display:flex;align-items:center;gap:10px;min-height:46px}
+.file-top .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px}
+/* 路径字体放大到 15px：手机端单手阅读更舒适；加粗保持视觉层级 */
+.file-top .path{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.file-top .up{background:var(--accent);color:#fff;border-radius:12px;padding:9px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px;font-weight:600;min-height:36px}
+/* 面包屑：字体 13px + 可点击块加 padding，手机端点击不费力；保留分隔符与高亮色 */
+.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;color:var(--muted);font-size:13px;line-height:1.5;overflow-x:auto;padding:2px 0}
+.crumb a{color:var(--accent);white-space:nowrap;padding:4px 6px;border-radius:6px;-webkit-tap-highlight-color:transparent}
+.crumb a:active{background:var(--chip)}
+.crumb .sep{color:var(--muted2);padding:0 1px}
 #files-body{padding:4px 14px 12px}
 .flist{display:flex;flex-direction:column;gap:6px}
 .fitem{
@@ -728,6 +731,30 @@ window.__onBackupProgress=function(p){
     if(fillEl)fillEl.style.width="0%";
     if(curEl){curEl.textContent=p.message||"出错";curEl.className="bk-prog-cur err";}
   }
+};
+
+/* ========= 原生系统返回/侧滑返回 转发处理（避免滑动就退桌面） =========
+ * 由 MainActivity.onBackPressed 回调触发，同步返回字符串状态：
+ *   handled     — 已在 H5 内部消费（文件页 goUp / 切回首页）
+ *   not_handled — H5 已在首页顶层，原生应执行 finish() 退出
+ */
+window.__onNativeBack=function(){
+  // 1) 文件页：非根 → 上一级；根 → 切回首页
+  if(curTab==="files"){
+    if(curFiles){
+      goUp();
+      return "handled";
+    }
+    setTab("home");
+    return "handled";
+  }
+  // 2) 我的页 → 切回首页
+  if(curTab==="me"){
+    setTab("home");
+    return "handled";
+  }
+  // 3) 首页 → 交给原生 finish() 退出 App
+  return "not_handled";
 };
 
 /* ========= 远程目录浏览（复用 /portal/api/openlist/files/list） ========= */
