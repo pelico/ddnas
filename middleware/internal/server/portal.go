@@ -202,6 +202,27 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .sitem.big .ic{background:linear-gradient(135deg,#38c77a,#1aa35f);color:#fff}
 .sitem.big .lbl{font-weight:600}
 
+/* 备份设置面板：行布局，标签+值+动作按钮 */
+.bk-panel{
+  padding:6px 14px 14px;display:flex;flex-direction:column;gap:10px;
+  border-top:1px solid var(--bd);margin-top:4px;background:var(--surface2);
+}
+.bk-row{display:flex;align-items:center;gap:8px;min-height:36px}
+.bk-k{font-size:12px;color:var(--muted);width:64px;flex-shrink:0}
+.bk-v{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-v.empty{color:var(--muted2)}
+.bk-input{
+  flex:1;min-width:0;font:inherit;font-size:13px;color:var(--fg);
+  background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;
+}
+.bk-input:focus{outline:none;border-color:var(--accent)}
+.bk-btn{
+  flex-shrink:0;background:var(--chip);color:var(--accent);
+  font-size:12px;border-radius:8px;padding:7px 10px;border:1px solid var(--bd);
+}
+.bk-btn:active{opacity:.6}
+.bk-row.warn .bk-v{color:var(--warn)}
+
 /* ===== 底部三栏导航 ===== */
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
@@ -235,15 +256,14 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <div class="page">
 
     <div class="nas-card">
-      <div class="nas-title">
-        <div class="txt">
+      <div class="nas-title" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div class="txt" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
           <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
-          <div style="height:6px"></div>
-          <div style="font-size:12px;opacity:.85" id="d-desc">家庭私有云 · 中间件 v1</div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-          <span style="font-size:11px;opacity:.85;min-height:16px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" id="d-stat">初始化中…</span>
-          <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center" onclick="forceRefreshSystem()">↻</button>
+        <div style="display:flex;align-items:center;gap:8px;width:100%">
+          <div style="flex:1;min-width:0;font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-desc">家庭私有云 · 中间件 v1</div>
+          <span style="font-size:11px;opacity:.85;white-space:nowrap;text-align:right;min-width:96px;max-width:140px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0" id="d-stat">初始化中…</span>
+          <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center;flex-shrink:0" onclick="forceRefreshSystem()">↻</button>
         </div>
       </div>
       <div class="nas-usage">
@@ -268,8 +288,8 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <div class="file-top">
       <button class="back" onclick="goUp()" title="上级">←</button>
       <div class="path" id="file-path">/</div>
-      <button class="up" onclick="document.getElementById('upfile').click()">⬆ 上传</button>
-      <input type="file" id="upfile" hidden onchange="upload(this)">
+      <button class="up" id="up-btn" onclick="document.getElementById('upfile').click()">⬆ 上传</button>
+      <input type="file" id="upfile" hidden multiple onchange="upload(this)">
     </div>
     <div class="crumb" id="crumb"></div>
   </div>
@@ -289,11 +309,28 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" id="bk-section">
       <div class="sitem big" onclick="ddnas.startBackup()">
         <span class="ic">💾</span>
-        <div class="lbl">手机备份<div class="desc">选择本地目录，递归上传到中间件 /手机备份/时间戳/</div></div>
+        <div class="lbl">立即备份<div class="desc" id="bk-quick-desc">递归上传选中目录到中间件</div></div>
         <span class="arr">›</span>
+      </div>
+      <div class="bk-panel">
+        <div class="bk-row">
+          <div class="bk-k">本地目录</div>
+          <div class="bk-v" id="bk-dir">未选择</div>
+          <button class="bk-btn" id="bk-pick" onclick="ddnas.chooseBackupDir()">选择</button>
+        </div>
+        <div class="bk-row">
+          <div class="bk-k">远程路径</div>
+          <input class="bk-input" id="bk-remote" type="text" placeholder="/手机备份/" />
+          <button class="bk-btn" id="bk-save-remote" onclick="saveRemoteBase()">保存</button>
+        </div>
+        <div class="bk-row">
+          <div class="bk-k">上次备份</div>
+          <div class="bk-v" id="bk-last">—</div>
+          <button class="bk-btn" id="bk-refresh-cfg" onclick="loadBackupConfig()">刷新</button>
+        </div>
       </div>
     </div>
 
@@ -391,7 +428,7 @@ function setTab(t){
   });
   if(t==="home"&&!homeLoaded)loadHome();
   if(t==="files"&&!filesLoadedEver)loadFiles("");
-  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;}
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();}
   // 滚动回到顶部
   window.scrollTo({top:0,behavior:"instant"});
 }
@@ -502,6 +539,64 @@ function forceRefreshSystem(){
   }
   window.__doLoad(true);
 }
+
+/* ===== 备份配置面板：读 App 桥渲染，保存走 App 桥 ===== */
+function fmtBackupTime(ts){
+  ts=+ts||0;if(!ts)return "—";
+  try{
+    const d=new Date(ts);
+    const p=n=>String(n).padStart(2,"0");
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+  }catch(e){return "—";}
+}
+function loadBackupConfig(){
+  const dirEl=document.getElementById("bk-dir");
+  const remoteEl=document.getElementById("bk-remote");
+  const lastEl=document.getElementById("bk-last");
+  const quickDescEl=document.getElementById("bk-quick-desc");
+  if(!dirEl)return;
+  if(typeof ddnas==="undefined"||!ddnas.getBackupConfig){
+    if(dirEl){dirEl.textContent="App 内可用";dirEl.classList.add("empty");}
+    if(remoteEl)remoteEl.disabled=true;
+    if(lastEl)lastEl.textContent="App 内可用";
+    return;
+  }
+  let cfg=null;
+  try{cfg=JSON.parse(ddnas.getBackupConfig());}catch(e){cfg=null;}
+  if(!cfg){if(dirEl)dirEl.textContent="读取失败";return;}
+  // 本地目录：hasDir=true 显示路径；hasDir=false 显示"未选择"
+  if(cfg.hasDir){
+    dirEl.textContent=cfg.dirDisplay||"已选择";
+    dirEl.classList.remove("empty");
+    if(quickDescEl)quickDescEl.textContent="递归上传 "+(cfg.dirDisplay||"所选目录")+" → "+(cfg.remoteBase||"/手机备份/");
+  }else{
+    dirEl.textContent="未选择（或权限已失效）";
+    dirEl.classList.add("empty");
+    if(quickDescEl)quickDescEl.textContent='点击下方"选择"按钮选本地目录';
+  }
+  // 远程路径：仅在为空时填默认占位
+  if(remoteEl && !remoteEl.dataset.touched){
+    remoteEl.value=cfg.remoteBase||"/手机备份/";
+  }
+  if(lastEl)lastEl.textContent=fmtBackupTime(cfg.lastBackupTime);
+}
+function saveRemoteBase(){
+  const remoteEl=document.getElementById("bk-remote");
+  if(!remoteEl)return;
+  remoteEl.dataset.touched="1";
+  let base=remoteEl.value.trim();
+  if(!base){toast("远程路径不能为空");return;}
+  // 规范：必须以 / 开头，以 / 结尾
+  if(base.charAt(0)!=="/")base="/"+base;
+  if(base.charAt(base.length-1)!=="/")base=base+"/";
+  if(typeof ddnas==="undefined"||!ddnas.setRemoteBase){toast("请在 App 内使用");return;}
+  try{
+    ddnas.setRemoteBase(base);
+    remoteEl.value=base;
+    toast("已保存远程路径："+base,1500);
+    loadBackupConfig();
+  }catch(e){toast("保存失败："+e.message);}
+}
 function monitorEmpty(title,reason){
   // 占位监控卡：左侧灰色空环，右侧展示"—"；保持 2x2 网格稳定，不会从"4 卡"忽然变"1 条错误"页面跳动
   return '<div class="m-card">'+
@@ -610,6 +705,8 @@ function loadFiles(p){
   const body=document.getElementById("files-body");
   const pathEl=document.getElementById("file-path");
   pathEl.textContent="/"+(curFiles||"");
+  const upBtn=document.getElementById("up-btn");
+  if(upBtn)upBtn.title="上传到当前目录: /"+(curFiles||"");
   renderCrumb(curFiles);
   body.innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
   fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
@@ -804,14 +901,25 @@ function viewImage(relPath){
   document.body.appendChild(ov);
 }
 async function upload(input){
-  const f=input.files&&input.files[0];if(!f)return;
-  const dest=joinPath(curFiles,f.name);toast("上传中… "+f.name);
-  try{
-    const r=await fetch("/portal/api/openlist/files/upload?path="+encodeURIComponent(dest),{method:"POST",body:f,headers:{"Content-Type":"application/octet-stream"}});
-    if(!r.ok)throw new Error("HTTP "+r.status);
-    toast("上传完成");loadFiles(curFiles);
-  }catch(e){toast("上传失败："+e.message);}
+  const files=input.files;if(!files||!files.length)return;
+  const dir=curFiles||"";
+  const dirDisp=dir?("/"+dir):"/";
+  let ok=0,fail=0;const total=files.length;
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    const dest=joinPath(dir,f.name);
+    toast("上传中 ("+(i+1)+"/"+total+") → "+dirDisp+"/"+f.name);
+    try{
+      const r=await fetch("/portal/api/openlist/files/upload?path="+encodeURIComponent(dest),{method:"POST",body:f,headers:{"Content-Type":"application/octet-stream"}});
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      ok++;
+    }catch(e){fail++;console.error("上传失败 "+f.name,e);}
+  }
   input.value="";
+  if(fail===0){toast("已上传 "+ok+" 个文件到 "+dirDisp,2000);}
+  else if(ok===0){toast("上传失败 "+fail+" 个",3000);}
+  else{toast("完成 "+ok+" 成功 / "+fail+" 失败",3000);}
+  loadFiles(dir);
 }
 
 /* ========= 启动：按 URL ?tab= 或默认 home ========= */

@@ -81,7 +81,17 @@ class MainActivity : ComponentActivity() {
             if (uri != null) onTreePicked(uri)
         }
         notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) treePicker.launch(null)
+            if (!granted) { pendingBackupAfterPerm = false; return@registerForActivityResult }
+            // 通知权限通过：若 pendingBackupAfterPerm 为 true，按既有备份目录直接备份；
+            // 否则走首次选目录流程
+            val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+            if (pendingBackupAfterPerm && cfg.treeUri.isNotEmpty()) {
+                pendingBackupAfterPerm = false
+                startBackupService(cfg.treeUri, cfg.remoteBase)
+            } else {
+                pendingBackupAfterPerm = false
+                treePicker.launch(null)
+            }
         }
         // <input type="file"> 选择回调，portal 上传按钮需要
         fileChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -296,6 +306,7 @@ class MainActivity : ComponentActivity() {
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                     android.content.pm.PackageManager.PERMISSION_GRANTED
                 ) {
+                    pendingBackupAfterPerm = true
                     notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     return@runOnUiThread
                 }
@@ -308,7 +319,48 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        /** 选择本地备份源目录（SAF）。选择后持久化 treeUri，下次直接复用。 */
+        @JavascriptInterface
+        fun chooseBackupDir() {
+            runOnUiThread { treePicker.launch(null) }
+        }
+
+        /** 返回备份配置 JSON：{hasDir,dirDisplay,remoteBase,autoBackup,lastBackupTime}。
+         *  portal 我的页用此渲染备份面板。 */
+        @JavascriptInterface
+        fun getBackupConfig(): String {
+            val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+            val dir = treeUriDisplay(cfg.treeUri)
+            val hasDir = cfg.treeUri.isNotEmpty()
+            // 校验持久化权限是否仍然有效（用户可能在系统设置里撤销了）
+            val permValid = hasDir && run {
+                val perms = contentResolver.persistedUriPermissions
+                perms.any { it.uri.toString() == cfg.treeUri && it.isReadPermission }
+            }
+            val sb = StringBuilder("{")
+            sb.append("\"hasDir\":").append(permValid)
+            sb.append(",\"dirDisplay\":\"").append(escJSON(dir)).append("\"")
+            sb.append(",\"remoteBase\":\"").append(escJSON(cfg.remoteBase)).append("\"")
+            sb.append(",\"autoBackup\":").append(cfg.autoBackup)
+            sb.append(",\"lastBackupTime\":").append(cfg.lastBackupTime)
+            sb.append("}")
+            return sb.toString()
+        }
+
+        /** 修改远程备份根路径，持久化到 DataStore。 */
+        @JavascriptInterface
+        fun setRemoteBase(base: String) {
+            kotlinx.coroutines.runBlocking { backupStore.setRemoteBase(base) }
+        }
+
+        private fun escJSON(s: String): String =
+            s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r")
     }
+
+    /** 通知权限授予后待执行的备份动作标记。 */
+    private var pendingBackupAfterPerm = false
 
     private fun startPlayer(streamUrl: String) {
         val active = currentServer() ?: return
@@ -339,6 +391,18 @@ class MainActivity : ComponentActivity() {
         kotlinx.coroutines.runBlocking { backupStore.setTreeUri(treeUriStr) }
         val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
         startBackupService(treeUriStr, cfg.remoteBase)
+    }
+
+    /** 读取已选 SAF 目录的简短可读路径（content uri 的 last path segment）。 */
+    private fun treeUriDisplay(uriStr: String): String {
+        if (uriStr.isEmpty()) return ""
+        return try {
+            val uri = Uri.parse(uriStr)
+            // tree uri 形如 content://com.android.externalstorage.documents/tree/primary%3ADCIM
+            val seg = uri.lastPathSegment ?: uri.path ?: uriStr
+            java.net.URLDecoder.decode(seg, "UTF-8")
+                .substringAfter("tree/").ifEmpty { seg }
+        } catch (_: Exception) { uriStr }
     }
 
     /** 启动备份前台服务，传入 treeUri/远程路径/cookie。 */
