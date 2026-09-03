@@ -126,41 +126,21 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .c12{background:linear-gradient(135deg,#a0a6b3,#7c8392)}
 
 /* ===== 监控 4 卡（2×2）：半环 + 指标 ===== */
-.monitor{
-  display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;
-}
-.m-card{
-  background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:12px 14px;position:relative;
-}
-.m-card .title{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
-.m-card .title .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
-.m-card .title.err .dot{background:var(--warn)}
-.m-card .row{display:flex;align-items:flex-end;justify-content:space-between;margin-top:4px}
-.m-card .num{font-size:22px;font-weight:700;letter-spacing:.5px}
-.m-card .sub{font-size:11px;color:var(--muted);margin-bottom:3px}
-/* 小半圆进度：用 clip + 伪元素，不依赖 SVG */
-.ring{
-  --p:0%; --c:#3478f6; --sz:38px;
-  width:var(--sz);height:calc(var(--sz)/2);overflow:hidden;position:relative;
-}
-.ring::before{
-  content:"";position:absolute;inset:0;border-radius:var(--sz) var(--sz) 0 0 / 100% 100% 0 0;
-  border:6px solid var(--bd);border-bottom:0;box-sizing:border-box;
-}
-.ring::after{
-  content:"";position:absolute;left:0;right:0;bottom:0;height:100%;
-  background:conic-gradient(from 180deg, var(--c) calc(var(--p) * 1deg / 1.8), transparent 0);
-  clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
-  mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px + 1px));
-  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px + 1px));
-}
-.ring.ok{--c:#25c275}
-.ring.warn{--c:#f5a623}
-.ring.err{--c:#ef5b5b}
-.ring.two{--c:#4cc9d4}
-.m-kv{display:flex;flex-direction:column;gap:2px;align-items:flex-end}
-.m-kv .k{font-size:10px;color:var(--muted)}
-.m-kv .v{font-size:12px}
+/* 监控卡：纵向堆叠的横向长方块，每行一项，紧凑 */
+.monitor{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.m-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 14px}
+.m-card .m-hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.m-card .m-title{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600}
+.m-card .m-title .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.m-card .m-title.err .dot{background:var(--warn)}
+.m-card .m-right{font-size:14px;font-weight:700}
+.m-card .m-bar{height:5px;background:var(--surface2);border-radius:999px;overflow:hidden;margin-top:8px}
+.m-card .m-bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .5s}
+.m-card .m-bar.ok>i{background:var(--ok)}
+.m-card .m-bar.warn>i{background:var(--warn)}
+.m-card .m-bar.err>i{background:var(--err)}
+.m-card .m-vals{display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.m-card .m-vals b{color:var(--fg);font-weight:600}
 
 /* 错误 / 未启用提示卡 */
 .tip-card{
@@ -442,18 +422,17 @@ let homeLoaded=false;
 let pollTimer=null;
 
 // 判断圆环配色
-function ringClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
-// 监控格：conic 半环显示使用率，右侧显示具体数值+辅助
+function barClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
+// 监控卡：横向长方块，标题+进度条+键值对，紧凑展示
 function mCardHTML(opts){
   const p=Math.max(0,Math.min(100,+opts.percent||0));
-  // 180deg 半环，p% 对应 p*1.8 deg
-  const rows=(opts.metrics||[]).map(function(m){return '<span class="k">'+esc(m.k)+'</span><span class="v">'+esc(m.v)+'</span>';}).join("");
+  const vals=(opts.metrics||[]).map(function(m){return '<span>'+esc(m.k)+' <b>'+m.v+'</b></span>';}).join("");
+  const right=opts.right?'<span class="m-right">'+opts.right+'</span>':'';
+  const bar=opts.bar!==false?('<div class="m-bar '+barClass(p)+'"><i style="width:'+p.toFixed(0)+'%"></i></div>'):'';
   return '<div class="m-card">'+
-    '<div class="title '+(opts.err?'err':'')+'"><span class="dot"></span>'+esc(opts.title)+'</div>'+
-    '<div class="row">'+
-      '<div><div class="ring '+ringClass(p)+' '+(opts.color||'')+'" style="--p:'+p.toFixed(1)+'"></div></div>'+
-      '<div class="m-kv">'+rows+'</div>'+
-    '</div>'+
+    '<div class="m-hd"><div class="m-title '+(opts.err?'err':'')+'"><span class="dot"></span>'+esc(opts.title)+'</div>'+right+'</div>'+
+    bar+
+    (vals?'<div class="m-vals">'+vals+'</div>':'')+
   '</div>';
 }
 
@@ -576,46 +555,31 @@ function renderMonitor(s){
   let disk={};
   (s.disks||[]).forEach(d=>{if(!disk.total_bytes||+d.total_bytes>+disk.total_bytes)disk=d;});
 
-  // CPU：负载+使用率
   const cpuPct=+cpu.usage_percent||0;
-  const cpuHtml=mCardHTML({
-    title:"CPU",percent:cpuPct,color:"",
-    metrics:[
-      {k:"使用率",v:cpuPct.toFixed(1)+"%"},
-      {k:"负载",v: (+cpu.load1||0).toFixed(2)+"/"+(+cpu.load5||0).toFixed(2)+"/"+(+cpu.load15||0).toFixed(2)},
-      {k:"核心",v: cpu.cores?cpu.cores+"核":"—"}
-    ]
-  });
-  // 内存：已用/总 + 使用率
+  const cpuHtml=mCardHTML({title:"CPU",percent:cpuPct,metrics:[
+    {k:"负载",v:(+cpu.load1||0).toFixed(2)},
+    {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
+  ]});
   const memPct=+mem.usage_percent||0;
-  const memHtml=mCardHTML({
-    title:"内存",percent:memPct,color:"two",
+  const memHtml=mCardHTML({title:"内存",percent:memPct,metrics:[
+    {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
+    {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
+  ]});
+  // 网络：后端基于两次采样做差计算 B/s 速率，首次请求为 0
+  const netHtml=mCardHTML({title:"网络",bar:false,
+    right:"↓ "+fmtBytes(+net.rx_rate||0)+"/s ↑ "+fmtBytes(+net.tx_rate||0)+"/s",
     metrics:[
-      {k:"使用率",v:memPct.toFixed(1)+"%"},
-      {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
-      {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
-    ]
-  });
-  // 网络：上行/下行（以 KB/s 显示，无历史暂显示累计字节；node_exporter 原生是累积 counter）
-  // 注：单次快照拿不到速率。显示"累计收/发"更准确。
-  const netHtml=mCardHTML({
-    title:"网络",percent:0,color:"ok",
-    metrics:[
-      {k:"接收",v:fmtBytes(+net.rx_bytes||0)},
-      {k:"发送",v:fmtBytes(+net.tx_bytes||0)},
+      {k:"累计接收",v:fmtBytes(+net.rx_bytes||0)},
+      {k:"累计发送",v:fmtBytes(+net.tx_bytes||0)},
       {k:"网卡",v:esc(net.device||"—")}
     ]
   });
-  // 硬盘：首个挂载点使用率 + 读写（node_exporter 无统一读写指标，先空出显示使用率/已用/总量）
   const diskPct=+disk.usage_percent||0;
-  const diskHtml=mCardHTML({
-    title:"硬盘",percent:diskPct,color:"warn",
-    metrics:[
-      {k:"使用率",v:diskPct.toFixed(1)+"%"},
-      {k:"已用/总",v:fmtBytes(+disk.used_bytes||0)+" / "+fmtBytes(+disk.total_bytes||0)},
-      {k:"挂载",v:esc(disk.mountpoint||"—")}
-    ]
-  });
+  const diskHtml=mCardHTML({title:"硬盘",percent:diskPct,metrics:[
+    {k:"已用",v:fmtBytes(+disk.used_bytes||0)},
+    {k:"总量",v:fmtBytes(+disk.total_bytes||0)},
+    {k:"挂载",v:esc(disk.mountpoint||"—")}
+  ]});
   box.innerHTML=cpuHtml+memHtml+netHtml+diskHtml;
 }
 

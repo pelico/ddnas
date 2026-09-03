@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pelico/ddnas/middleware/internal/plugin"
@@ -21,6 +22,15 @@ func init() {
 type Adapter struct {
 	endpoint string // 如 http://127.0.0.1:9100
 	client   *http.Client
+	// netLast 缓存上次网络采样，用于计算 B/s 速率
+	netLast map[string]netSample
+	netMu   sync.Mutex
+}
+
+// netSample 缓存单网卡的累计字节和采样时刻。
+type netSample struct {
+	rx, tx float64
+	ts    time.Time
 }
 
 func (a *Adapter) Name() string { return "node" }
@@ -137,9 +147,12 @@ type fsInfo struct {
 }
 
 type netInfo struct {
-	Device    string  `json:"device"`
-	RxBytes   float64 `json:"rx_bytes"`
-	TxBytes   float64 `json:"tx_bytes"`
+	Device  string  `json:"device"`
+	RxBytes float64 `json:"rx_bytes"`
+	TxBytes float64 `json:"tx_bytes"`
+	// RxRate/TxRate 为基于两次采样差值计算的速率（B/s），首次请求为 0
+	RxRate float64 `json:"rx_rate"`
+	TxRate float64 `json:"tx_rate"`
 }
 
 // --- handlers ---
@@ -170,6 +183,8 @@ func (a *Adapter) handleSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	text := string(body)
 	info := parseSystem(text)
+	// 基于上次采样计算网络速率（B/s），首次请求全为 0
+	a.computeNetRate(info.Network)
 	// 调试：如果关键字段全空（说明解析没命中指标），填充原始文本前 1000 字符
 	// 帮助定位 node_exporter 版本差异导致的指标名不同问题。
 	if info.Hostname == "" && info.CPU.Load1 == 0 && info.Memory.Total == 0 {
@@ -396,7 +411,7 @@ func parseNet(metrics []metric) []netInfo {
 	devs := map[string]bool{}
 	for _, m := range metrics {
 		d := m.labels["device"]
-		if d == "" || d == "lo" {
+		if isVirtualNet(d) {
 			continue
 		}
 		switch m.name {
@@ -413,6 +428,53 @@ func parseNet(metrics []metric) []netInfo {
 		out = append(out, netInfo{Device: d, RxBytes: rx[d], TxBytes: tx[d]})
 	}
 	return out
+}
+
+// isVirtualNet 判断是否为虚拟/容器网卡，这类不应计入物理网速。
+func isVirtualNet(dev string) bool {
+	if dev == "" || dev == "lo" {
+		return true
+	}
+	switch {
+	case strings.HasPrefix(dev, "docker"),
+		strings.HasPrefix(dev, "veth"),
+		strings.HasPrefix(dev, "br-"),
+		strings.HasPrefix(dev, "veth"),
+		strings.HasPrefix(dev, "cni"),
+		strings.HasPrefix(dev, "flannel"),
+		dev == "docker0",
+		dev == "br0":
+		return true
+	}
+	return false
+}
+
+// computeNetRate 基于上次采样的累计字节和当前值做差，除以真实时间差得到 B/s 速率。
+// counter 可能因重启/溢出回绕，差值为负时跳过（返回 0）。
+func (a *Adapter) computeNetRate(nets []netInfo) {
+	a.netMu.Lock()
+	defer a.netMu.Unlock()
+	now := time.Now()
+	if a.netLast == nil {
+		a.netLast = map[string]netSample{}
+	}
+	next := map[string]netSample{}
+	for i := range nets {
+		n := &nets[i]
+		if prev, ok := a.netLast[n.Device]; ok {
+			dt := now.Sub(prev.ts).Seconds()
+			if dt > 0.5 { // 时间差太小不可靠，跳过
+				if n.RxBytes >= prev.rx {
+					n.RxRate = (n.RxBytes - prev.rx) / dt
+				}
+				if n.TxBytes >= prev.tx {
+					n.TxRate = (n.TxBytes - prev.tx) / dt
+				}
+			}
+		}
+		next[n.Device] = netSample{rx: n.RxBytes, tx: n.TxBytes, ts: now}
+	}
+	a.netLast = next
 }
 
 // --- helpers ---
