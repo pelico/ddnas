@@ -47,13 +47,21 @@ func (s *Server) Reload() {
 	mux := http.NewServeMux()
 	s.admin.Mount(mux)
 
-	// /api/adapters 发现接口
+	// /portal 页面：App 套壳 WebView 加载，cookie 会话鉴权。
+	mux.HandleFunc("GET /portal", s.servePortal)
+
+	// /api/adapters 发现接口（Bearer）
 	mux.HandleFunc("GET /api/adapters", s.authed(s.handleAdapters, cfg.Auth.AppToken))
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+	// /portal/api/health 供 App 套壳探测：cookie 会话鉴权。
+	mux.HandleFunc("GET /portal/api/health", s.admin.AuthedAPI(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
 
-	// 挂载各启用适配器
+	// 挂载各启用适配器：同时以 Bearer（/api/*，供外部程序化访问）与
+	// cookie 会话（/portal/api/*，供 WebView 同源 fetch 与原生 ExoPlayer 注入 cookie）两种鉴权镜像挂载。
 	for _, a := range s.adapters {
 		raw := s.store.AdapterConfig(a.Name())
 		if en, _ := raw["enabled"].(bool); !en {
@@ -66,6 +74,8 @@ func (s *Server) Reload() {
 		for _, rt := range a.Routes() {
 			full := "/api/" + a.Name() + rt.Path
 			mux.HandleFunc(rt.Method+" "+full, s.authed(rt.Handler, cfg.Auth.AppToken))
+			portal := "/portal/api/" + a.Name() + rt.Path
+			mux.HandleFunc(rt.Method+" "+portal, s.admin.AuthedAPI(rt.Handler))
 		}
 	}
 	s.mux = mux

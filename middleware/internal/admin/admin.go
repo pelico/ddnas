@@ -48,6 +48,11 @@ func (a *Admin) Mount(mux *http.ServeMux) {
 }
 
 func (a *Admin) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// 已登录直达 /portal（App 套壳首页）；否则走配置控制台流程（setup/login）。
+	if a.store.Configured() && a.loggedIn(r) {
+		http.Redirect(w, r, "/portal", http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, "/admin/", http.StatusFound)
 }
 
@@ -286,6 +291,25 @@ func (a *Admin) loggedIn(r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// LoggedIn 报告当前请求是否持有有效 admin 会话 cookie。
+// 供 server 包为 /portal 页面与 /portal/api/* 接口做 cookie 会话鉴权。
+func (a *Admin) LoggedIn(r *http.Request) bool { return a.loggedIn(r) }
+
+// AuthedAPI 要求 admin 会话；失败返回 401 JSON。
+// 供 /portal/api/* 等 JSON 接口（WebView 同源 fetch 与原生 ExoPlayer 注入 cookie 访问）。
+func (a *Admin) AuthedAPI(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.loggedIn(r) {
+			next(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}
 }
 
 func randToken(n int) string {
