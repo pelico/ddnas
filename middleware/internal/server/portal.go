@@ -381,10 +381,11 @@ function mediaExt(name){const ext=(String(name||"").split(".").pop()||"").toLowe
   if(/^(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md|csv|zip|rar|7z|tar|gz)$/.test(ext))return"doc";
   return "other";
 }
+// 浏览器环境 fallback：play 走 openVideoPlayer（已在 play() 内判断），
+// 仅给 startBackup 一个提示。App 环境下 ddnas 已由 addJavascriptInterface 注入，不进这分支。
 if(typeof ddnas==="undefined"){
   window.ddnas={
-    playMedia(u){toast("原生桥不可用，播放地址：\n"+u);},
-    startBackup(){toast("原生桥不可用，备份功能请在 App 内使用。");window.open("/admin/","_self");}
+    startBackup(){toast("备份功能请在 App 内使用。");}
   };
 }
 
@@ -694,7 +695,38 @@ function play(relPath){
   if(!relPath)return;
   // 逐段 encodeURIComponent，保留 "/" 分隔，Go {path...} 会正确捕获多段
   const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
-  ddnas.playMedia(url);
+  const name=relPath.split("/").pop()||"播放";
+  // App 原生桥可用时调 ExoPlayer（支持更多格式 + 硬解 + cookie 注入）
+  if(typeof ddnas!=="undefined"&&typeof ddnas.playMedia==="function"){
+    try{ddnas.playMedia(url);return;}catch(e){}
+  }
+  // 浏览器环境或桥不可用：HTML5 video 标签直接播放（浏览器支持的格式直接放）
+  openVideoPlayer(url,name);
+}
+function openVideoPlayer(url,title){
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column";
+  var v=document.createElement("video");
+  v.src=url;v.controls=true;v.autoplay=true;
+  v.style.cssText="max-width:100%;max-height:90vh;width:auto;height:auto";
+  v.addEventListener("error",function(){
+    v.style.display="none";
+    var msg=document.createElement("div");
+    msg.style.cssText="color:#f5a623;text-align:center;padding:20px;max-width:400px";
+    msg.innerHTML="<p>无法播放此视频</p><p style='font-size:13px;opacity:.8;word-break:break-all'>"+esc(url)+"</p><p style='font-size:12px;opacity:.6'>可能原因：浏览器不支持此格式 / Cookie 未通过 / 文件损坏</p>";
+    ov.appendChild(msg);
+  });
+  var bar=document.createElement("div");
+  bar.style.cssText="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent)";
+  var t=document.createElement("span");
+  t.textContent=title;t.style.cssText="color:#fff;font-size:14px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+  var c=document.createElement("button");
+  c.textContent="\u2715";c.style.cssText="color:#fff;background:rgba(255,255,255,.2);border:none;width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer";
+  c.onclick=function(){ov.remove();};
+  bar.appendChild(t);bar.appendChild(c);
+  ov.appendChild(bar);ov.appendChild(v);
+  document.body.appendChild(ov);
+  v.play().catch(function(){});
 }
 async function upload(input){
   const f=input.files&&input.files[0];if(!f)return;

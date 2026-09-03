@@ -56,8 +56,9 @@ class PlayerActivity : Activity() {
     }
 
     private fun newPlayer(client: OkHttpClient, url: String): ExoPlayer {
+        // OkHttp client 已在 buildAuthedClient 里挂了 cookie 拦截器，
+        // ExoPlayer 发 Range 请求时拦截器自动注入 admin 会话 cookie。
         val factory: DataSource.Factory = OkHttpDataSource.Factory(client)
-            .setDefaultRequestProperties(mapOf("Cookie" to ""))
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(factory)
         return ExoPlayer.Builder(this)
             .setMediaSourceFactory(mediaSourceFactory)
