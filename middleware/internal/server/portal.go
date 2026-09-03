@@ -46,8 +46,8 @@ const portalSrc = `<!doctype html>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
 body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);overscroll-behavior:none;font-size:14px;line-height:1.5;
-  padding-top:env(safe-area-inset-top);
-  padding-bottom:calc(env(safe-area-inset-bottom) + 72px);
+  padding-top:calc(env(safe-area-inset-top) + 4px);
+  padding-bottom:calc(env(safe-area-inset-bottom) + 88px);
 }
 a{color:var(--accent);text-decoration:none}
 button{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer}
@@ -269,7 +269,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
         </div>
         <div style="text-align:right">
           <div class="device-art">🖴</div>
-          <div style="font-size:11px;margin-top:2px;opacity:.9" id="d-stat">初始化中…</div>
+          <div style="font-size:11px;margin-top:2px;opacity:.9;min-height:30px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-stat">初始化中…</div>
           <button id="d-refresh" style="font-size:11px;color:#fff;opacity:.9;background:rgba(255,255,255,.18);border-radius:999px;padding:2px 8px;margin-top:6px;display:none" onclick="forceRefreshSystem()">↻ 立即刷新</button>
         </div>
       </div>
@@ -420,21 +420,11 @@ function setTab(t){
   window.scrollTo({top:0,behavior:"instant"});
 }
 
-/* ========= 功能宫格（12 格） ========= */
-// icon 为 emoji（无外部依赖，镜像小体积）；color 类名映射上面的配色；cap 检查对应适配器能力
+/* ========= 功能宫格 ========= */
+// 只保留已实现的核心功能，后续扩展再加回
 const FEATURES=[
   {id:"cloud",label:"云盘",icon:"📁",cls:"c1",cap:"files",on(){setTab("files");}},
-  {id:"files",label:"文件管理",icon:"🗂",cls:"c2",cap:"files",on(){setTab("files");}},
-  {id:"album",label:"拾光相册",icon:"🌸",cls:"c3",cap:"",on(){toast("相册模块后续扩展");}},
-  {id:"video",label:"拾光影视",icon:"▶️",cls:"c4",cap:"",on(){toast("影视模块后续扩展");}},
-  {id:"cloud2",label:"百度网盘",icon:"☁️",cls:"c5",cap:"",on(){toast("第三方网盘后续扩展");}},
-  {id:"backup",label:"备份管理",icon:"💾",cls:"c6",cap:"backup",on(){ddnas.startBackup();}},
-  {id:"safe",label:"保险箱",icon:"🔒",cls:"c7",cap:"",on(){toast("保险箱后续扩展");}},
-  {id:"stars",label:"星光豆",icon:"😊",cls:"c8",cap:"",on(){toast("运营位预留");}},
-  {id:"dl",label:"离线下载",icon:"⬇️",cls:"c9",cap:"download",on(){toast("下载器模块后续扩展");}},
-  {id:"task",label:"任务中心",icon:"🔄",cls:"c10",cap:"",on(){toast("任务中心后续扩展");}},
-  {id:"trash",label:"回收站",icon:"🗑",cls:"c11",cap:"",on(){toast("回收站后续扩展");}},
-  {id:"all",label:"全部应用",icon:"⊞",cls:"c12",cap:"",on(){toast("全部应用后续扩展");}},
+  {id:"backup",label:"手机备份",icon:"💾",cls:"c6",cap:"backup",on(){ddnas.startBackup();}},
 ];
 let caps=new Set();
 function renderGrid(){
@@ -567,8 +557,11 @@ function renderNasCard(s){
   }
   modelEl.textContent=s.hostname?esc(s.hostname.toUpperCase()):"DDNAS";
   const isWan=false;netEl.textContent=isWan?"外网":"内网";
-  let totalBytes=0,usedBytes=0;
-  (s.disks||[]).forEach(d=>{totalBytes+=+d.total_bytes||0;usedBytes+=+d.used_bytes||0;});
+  // 取容量最大的磁盘作为主盘展示（后端已过滤 tmpfs/overlay 等虚拟 FS）
+  let mainDisk=null;
+  (s.disks||[]).forEach(d=>{if(!mainDisk||+d.total_bytes>+mainDisk.total_bytes)mainDisk=d;});
+  let totalBytes=mainDisk?+mainDisk.total_bytes:0;
+  let usedBytes=mainDisk?+mainDisk.used_bytes:0;
   usedEl.textContent=fmtBytes(usedBytes);totalEl.textContent=fmtBytes(totalBytes);
   freeEl.textContent=fmtBytes(Math.max(0,totalBytes-usedBytes));
   const p=totalBytes>0?usedBytes/totalBytes*100:0;
@@ -585,7 +578,9 @@ function renderMonitor(s){
   const cpu=s.cpu||{};
   const mem=s.memory||{};
   const net=(s.network||[])[0]||{};
-  const disk=(s.disks||[])[0]||{};
+  // 监控卡也取最大磁盘，与 NAS 卡片一致
+  let disk={};
+  (s.disks||[]).forEach(d=>{if(!disk.total_bytes||+d.total_bytes>+disk.total_bytes)disk=d;});
 
   // CPU：负载+使用率
   const cpuPct=+cpu.usage_percent||0;

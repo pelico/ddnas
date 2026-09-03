@@ -354,6 +354,12 @@ func parseFS(metrics []metric) []fsInfo {
 	}
 	var out []fsInfo
 	for mp, tot := range size {
+		fstype := fs[mp]
+		// 过滤非持久化/虚拟文件系统（tmpfs/overlay/docker 层等），
+		// 只保留真实磁盘分区，避免叠加后容量虚高。
+		if isVirtualFS(fstype) {
+			continue
+		}
 		f := free[mp]
 		used := tot - f
 		pct := 0.0
@@ -363,13 +369,25 @@ func parseFS(metrics []metric) []fsInfo {
 		out = append(out, fsInfo{
 			Device:       dev[mp],
 			Mountpoint:   mp,
-			FSType:       fs[mp],
+			FSType:       fstype,
 			Total:        tot,
 			Used:         used,
 			UsagePercent: pct,
 		})
 	}
 	return out
+}
+
+// isVirtualFS 判断是否为虚拟/临时文件系统，这类不应计入真实存储容量。
+func isVirtualFS(fstype string) bool {
+	switch fstype {
+	case "tmpfs", "devtmpfs", "squashfs", "overlay", "aufs", "nsfs",
+		"autofs", "cgroup", "cgroup2", "pstore", "mqueue",
+		"proc", "sysfs", "binfmt_misc", "fusectl", "fuse.gvfsd-fuse",
+		"devpts", "hugetlbfs", "ramfs", "rpc_pipefs":
+		return true
+	}
+	return false
 }
 
 func parseNet(metrics []metric) []netInfo {
