@@ -25,12 +25,24 @@ type Adapter struct {
 	// netLast 缓存上次网络采样，用于计算 B/s 速率
 	netLast map[string]netSample
 	netMu   sync.Mutex
+	// cpuLast 缓存上次 CPU 累计秒数采样，用于计算瞬时使用率（counter 增量法）
+	cpuLast *cpuSample
+	cpuMu   sync.Mutex
 }
 
 // netSample 缓存单网卡的累计字节和采样时刻。
 type netSample struct {
 	rx, tx float64
 	ts    time.Time
+}
+
+// cpuSample 缓存 node_cpu_seconds_total 的累计 idle/total 与采样时刻。
+// node_cpu_seconds_total 是系统启动以来的累计 counter，
+// 直接 (1-idle/total)*100 得到的是历史平均使用率（几乎不变化），
+// 必须用两次采样的增量计算瞬时使用率才有意义。
+type cpuSample struct {
+	idle, total float64
+	ts          time.Time
 }
 
 func (a *Adapter) Name() string { return "node" }
@@ -191,7 +203,12 @@ func (a *Adapter) handleSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := string(body)
-	info := parseSystem(text)
+	ms := parseMetrics(text)
+	info := parseSystem(ms)
+	// CPU 瞬时使用率：基于两次采样累计秒数的增量计算，覆盖历史平均值
+	if instant, ok := a.computeCpuUsage(ms); ok {
+		info.CPU.UsagePercent = instant
+	}
 	// 基于上次采样计算网络速率（B/s），首次请求全为 0
 	a.computeNetRate(info.Network)
 	// 调试：如果关键字段全空（说明解析没命中指标），填充原始文本前 1000 字符
@@ -291,8 +308,7 @@ func gauge(metrics []metric, name string) float64 {
 	return 0
 }
 
-func parseSystem(text string) systemInfo {
-	ms := parseMetrics(text)
+func parseSystem(ms []metric) systemInfo {
 	info := systemInfo{
 		Hostname: label(ms, "node_uname_info", "nodename"),
 		OS:       label(ms, "node_uname_info", "sysname"),
@@ -307,6 +323,7 @@ func parseSystem(text string) systemInfo {
 		Load5:  gauge(ms, "node_load5"),
 		Load15: gauge(ms, "node_load15"),
 	}
+	// cpuUsage 返回的是历史累计平均（counter 直接相除），瞬时使用率由 computeCpuUsage 覆盖
 	info.CPU.UsagePercent = cpuUsage(ms)
 	info.Memory = memInfo{
 		Total:     gauge(ms, "node_memory_MemTotal_bytes"),
@@ -458,6 +475,41 @@ func isVirtualNet(dev string) bool {
 		return true
 	}
 	return false
+}
+
+// computeCpuUsage 基于两次 node_cpu_seconds_total 采样的累计秒数增量计算瞬时使用率。
+// node_cpu_seconds_total 是系统启动以来的累计 counter，直接 (1-idle/total)*100
+// 得到的是历史平均使用率（几乎不变化），必须用增量才有意义。
+// 返回 (instant, true) 当增量有效；首次采样/回绕返回 (0, false) 让上层用历史值兜底。
+func (a *Adapter) computeCpuUsage(ms []metric) (float64, bool) {
+	var idle, total float64
+	for _, m := range ms {
+		if m.name != "node_cpu_seconds_total" {
+			continue
+		}
+		total += m.value
+		if m.labels["mode"] == "idle" {
+			idle += m.value
+		}
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	a.cpuMu.Lock()
+	defer a.cpuMu.Unlock()
+	now := time.Now()
+	if a.cpuLast != nil {
+		dt := now.Sub(a.cpuLast.ts).Seconds()
+		if dt > 0.5 && total > a.cpuLast.total && idle >= a.cpuLast.idle {
+			dTotal := total - a.cpuLast.total
+			dIdle := idle - a.cpuLast.idle
+			if dTotal > 0 {
+				return (1 - dIdle/dTotal) * 100, true
+			}
+		}
+	}
+	a.cpuLast = &cpuSample{idle: idle, total: total, ts: now}
+	return 0, false
 }
 
 // computeNetRate 基于上次采样的累计字节和当前值做差，除以真实时间差得到 B/s 速率。
