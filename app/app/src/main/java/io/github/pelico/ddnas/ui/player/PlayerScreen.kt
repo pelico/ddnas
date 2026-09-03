@@ -48,7 +48,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as DdnasApplication
-    val token by app.settings.appToken.collectAsState(initialValue = "")
+    val token by app.settings.appToken.collectAsState(initial = "")
 
     val exoPlayer = remember(streamUrl, token) {
         val okFactory = OkHttpDataSource.Factory(RetrofitProvider.okHttpClient)
