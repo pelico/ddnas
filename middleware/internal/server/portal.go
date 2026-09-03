@@ -7,8 +7,6 @@ package server
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 )
 
 // portalSrc 内联完整 SPA。仿照用户参考的极空间 App 视觉：
@@ -367,6 +365,24 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 <div id="toast" class="toast"></div>
 
 <script>
+/* ========= 全局 401 拦截：session 失效自动跳登录页 ========= */
+// 容器重装 / 密码变更后旧 session 失效，/portal/api/* 返回 401。
+// 这里 monkey-patch fetch，捕获 401 后跳转 /admin/login，避免页面停在 401 JSON 上。
+(function(){
+  var _fetch=window.fetch;
+  window.fetch=function(){
+    return _fetch.apply(this,arguments).then(function(r){
+      if(r.status===401){
+        var u="/admin/login?redirect="+encodeURIComponent(location.pathname+location.search);
+        location.href=u;
+        // 返回永不 resolve 的 Promise，阻止后续 .then/.catch 执行
+        return new Promise(function(){});
+      }
+      return r;
+    });
+  };
+})();
+
 /* ========= 工具 ========= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
@@ -834,30 +850,8 @@ async function upload(input){
 </script>
 </body></html>`
 
-// portalFilePath 返回持久化的 portal.html 路径（与 config.yaml 同目录）。
-// 用户可直接编辑该文件自定义前端，改完刷新浏览器即时生效，无需重启容器或重新构建镜像。
-func portalFilePath() string {
-	dir := os.Getenv("DDNAS_DATA_DIR")
-	if dir == "" {
-		dir = "/data"
-	}
-	return filepath.Join(dir, "portal.html")
-}
-
-// ensurePortalFile 启动时检查 /data/portal.html 是否存在，不存在则释放内置默认版本。
-// 这样首次部署用户就有一份可编辑的副本，后续改前端只改这一个文件即可。
-func ensurePortalFile() {
-	p := portalFilePath()
-	if _, err := os.Stat(p); err == nil {
-		return // 已存在，用户可能已自定义，不要覆盖
-	}
-	_ = os.MkdirAll(filepath.Dir(p), 0o755)
-	_ = os.WriteFile(p, []byte(portalSrc), 0o644)
-}
-
 // servePortal 返回 App 套壳加载的 /portal 页面；未登录跳转到 /admin/login。
-// 页面从 /data/portal.html 读取（每次请求读文件，用户改完刷新即生效）；
-// 文件不存在或读失败则 fallback 到内嵌默认版本 portalSrc。
+// 页面直接返回内嵌的 portalSrc（跟随镜像更新，不再持久化到 /data，避免旧版不刷新）。
 // 页面是纯静态 HTML，所有动态数据通过同源 /portal/api/* 获取，
 // 内网地址（node_exporter:9100 / AList:5244 等）只写入 Go 配置，
 // 在 adapter handler 内以容器 HTTP Client 调用，客户端永不触及内网。
@@ -867,10 +861,5 @@ func (s *Server) servePortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if data, err := os.ReadFile(portalFilePath()); err == nil {
-		_, _ = w.Write(data)
-		return
-	}
-	// fallback：/data/portal.html 读不到（理论上只在 ensurePortalFile 失败时）
 	_, _ = w.Write([]byte(portalSrc))
 }

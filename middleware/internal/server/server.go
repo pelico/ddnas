@@ -86,7 +86,6 @@ func (s *Server) Reload() {
 
 // Run 启动 HTTP 服务。
 func (s *Server) Run(addr string) error {
-	ensurePortalFile() // 首次启动释放 /data/portal.html 默认版本
 	s.Reload()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
