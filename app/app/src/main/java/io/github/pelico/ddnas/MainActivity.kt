@@ -274,6 +274,10 @@ class MainActivity : ComponentActivity() {
     private fun startPlayer(streamUrl: String) {
         val active = currentServer() ?: return
         val cookie = CookieManager.getInstance().getCookie(active.url)
+        android.util.Log.i("DDNAS-Main", "startPlayer url=$streamUrl cookieLen=${cookie?.length ?: 0}")
+        if (cookie.isNullOrEmpty()) {
+            android.widget.Toast.makeText(this, "未获取到登录会话，请先在页面登录", android.widget.Toast.LENGTH_LONG).show()
+        }
         startActivity(
             Intent(this, PlayerActivity::class.java).apply {
                 putExtra(PlayerActivity.EXTRA_URL, streamUrl)

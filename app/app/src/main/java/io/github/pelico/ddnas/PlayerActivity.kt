@@ -1,10 +1,14 @@
 package io.github.pelico.ddnas
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -29,6 +33,8 @@ class PlayerActivity : Activity() {
         val host = intent.getStringExtra(EXTRA_HOST) ?: run { finish(); return }
         val cookie = intent.getStringExtra(EXTRA_COOKIE) ?: ""
 
+        Log.i(TAG, "start stream url=$streamUrl host=$host cookieLen=${cookie.length}")
+
         val client = buildAuthedClient(host, cookie)
         val view = PlayerView(this).also { v ->
             v.useController = true
@@ -47,8 +53,10 @@ class PlayerActivity : Activity() {
                 val target = req.url.host
                 val originHost = Uri.parse(host)?.host ?: host
                 if (target == originHost && cookie.isNotEmpty()) {
+                    Log.d(TAG, "inject cookie for $target (len=${cookie.length})")
                     chain.proceed(req.newBuilder().header("Cookie", cookie).build())
                 } else {
+                    Log.d(TAG, "skip cookie: target=$target origin=$originHost cookieLen=${cookie.length}")
                     chain.proceed(req)
                 }
             }
@@ -64,10 +72,28 @@ class PlayerActivity : Activity() {
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .also { p ->
+                p.addListener(object : Player.Listener {
+                    override fun onPlayerErrorChanged(error: PlaybackException?) {
+                        if (error != null) {
+                            Log.e(TAG, "player error", error)
+                            showError("播放失败", error.message ?: error.errorCodeName)
+                        }
+                    }
+                })
                 p.setMediaItem(MediaItem.fromUri(url))
                 p.prepare()
                 p.playWhenReady = true
             }
+    }
+
+    private fun showError(title: String, msg: String) {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(msg + "\n\n请查看 docker logs [openlist] 日志确认后端是否正常。\ncookie/鉴权问题多为 401。")
+                .setPositiveButton("关闭") { _, _ -> finish() }
+                .show()
+        }
     }
 
     override fun onDestroy() {
@@ -77,6 +103,7 @@ class PlayerActivity : Activity() {
     }
 
     companion object {
+        private const val TAG = "DDNAS-Player"
         const val EXTRA_URL = "stream_url"
         const val EXTRA_HOST = "host"
         const val EXTRA_COOKIE = "cookie"
