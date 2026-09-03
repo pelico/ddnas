@@ -23,10 +23,11 @@ func init() {
 
 // Adapter OpenList 适配器。
 type Adapter struct {
-	endpoint string
-	token    string // OpenList/AList 的访问令牌
-	root     string // 挂载根路径前缀，默认 "/"
-	client   *http.Client
+	endpoint     string
+	token        string // OpenList/AList 的访问令牌（JWT）
+	root         string // 挂载根路径前缀，默认 "/"
+	client       *http.Client // 普通 API 调用（list/get/upload），带整体超时
+	streamClient *http.Client // 流代理专用：不设整体超时，仅限响应头到达时间，避免大文件中途断流
 }
 
 func (a *Adapter) Name() string { return "openlist" }
@@ -55,6 +56,14 @@ func (a *Adapter) Init(raw map[string]any) error {
 		a.root = "/" + a.root
 	}
 	a.client = &http.Client{Timeout: 60 * time.Second}
+	// stream client：整体无超时，仅给响应头 30s 超时，body 可慢速读取（云盘 / 大文件）
+	a.streamClient = &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 	return nil
 }
 
@@ -190,50 +199,91 @@ func (a *Adapter) handleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out.Data)
 }
 
+// getRawURL 调用 /api/fs/get 获取文件直链（raw_url，带 sign）。
+// 复用与 list 接口相同的 JWT 鉴权，绕过 /d/ 接口 401 问题。
+// raw_url 可能是 AList 自身 /d/?sign=xxx，也可能是云盘原始下载地址。
+func (a *Adapter) getRawURL(full string) (string, error) {
+	resp, err := a.doJSON("POST", "/api/fs/get", map[string]any{"path": full})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Code int    `json:"code"`
+		Msg  string `json:"message"`
+		Data struct {
+			RawURL    string `json:"raw_url"`
+			Name       string `json:"name"`
+			IsDir      bool   `json:"is_dir"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Code != 200 {
+		return "", fmt.Errorf("OpenList 错误: %s", out.Msg)
+	}
+	if out.Data.IsDir {
+		return "", fmt.Errorf("目标是目录，非文件")
+	}
+	if out.Data.RawURL == "" {
+		return "", fmt.Errorf("raw_url 为空")
+	}
+	return out.Data.RawURL, nil
+}
+
 func (a *Adapter) handleStream(w http.ResponseWriter, r *http.Request) {
 	p := r.PathValue("path")
 	full := a.joinPath(p)
-	// OpenList 直接下载地址：/d/<path>
-	u := strings.TrimRight(a.endpoint, "/") + "/d" + full
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, u, nil)
+
+	// 1) 先调 /api/fs/get 获取带 sign 的直链 raw_url
+	rawURL, err := a.getRawURL(full)
 	if err != nil {
-		log.Printf("[openlist] stream 构造请求失败 path=%s err=%v", full, err)
+		log.Printf("[openlist] stream 获取 raw_url 失败 path=%s err=%v", full, err)
+		writeErr(w, http.StatusBadGateway, "获取文件直链失败: "+err.Error())
+		return
+	}
+
+	// 2) 用 streamClient 代理 raw_url（云盘直链可能慢，用无整体超时的 client）
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, rawURL, nil)
+	if err != nil {
+		log.Printf("[openlist] stream 构造请求失败 raw_url=%s err=%v", rawURL, err)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if a.token != "" {
-		req.Header.Set("Authorization", a.token)
-	}
+	// raw_url 已带 sign，不再需要 Authorization 头（云盘直链不认 JWT）
 	if cr := r.Header.Get("Range"); cr != "" {
 		req.Header.Set("Range", cr)
 	}
-	resp, err := a.client.Do(req)
+	// 标识 UA，部分云盘（如阿里云盘）需要
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 DDNAS/1.1")
+
+	resp, err := a.streamClient.Do(req)
 	if err != nil {
-		log.Printf("[openlist] stream 回源失败 url=%s err=%v", u, err)
-		writeErr(w, http.StatusBadGateway, "回源 OpenList 失败: "+err.Error())
+		log.Printf("[openlist] stream 回源失败 raw_url=%s err=%v", rawURL, err)
+		writeErr(w, http.StatusBadGateway, "回源直链失败: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
-	// 4xx/5xx：读取响应体帮助定位（AList 常见 401 token 失效 / 403 权限 / 404 路径 / sign 缺失）
+	// 4xx/5xx：读取响应体帮助定位
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		log.Printf("[openlist] stream 上游错误 status=%d url=%s range=%s ctype=%s body=%s",
-			resp.StatusCode, u, r.Header.Get("Range"), resp.Header.Get("Content-Type"), strings.TrimSpace(string(body)))
-		writeErr(w, http.StatusBadGateway, fmt.Sprintf("OpenList 返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+		log.Printf("[openlist] stream 上游错误 status=%d raw_url=%s range=%s ctype=%s body=%s",
+			resp.StatusCode, rawURL, r.Header.Get("Range"), resp.Header.Get("Content-Type"), strings.TrimSpace(string(body)))
+		writeErr(w, http.StatusBadGateway, fmt.Sprintf("直链返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 		return
 	}
 
-	log.Printf("[openlist] stream ok status=%d ctype=%s len=%s url=%s",
-		resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"), u)
+	log.Printf("[openlist] stream ok status=%d ctype=%s len=%s raw_url=%s",
+		resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"), rawURL)
 
-	// 透传响应头与状态码（含 Content-Disposition 便于浏览器识别文件类型）
+	// 透传响应头与状态码
 	for _, k := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition", "ETag", "Last-Modified"} {
 		if v := resp.Header.Get(k); v != "" {
 			w.Header().Set(k, v)
 		}
 	}
-	// 允许浏览器 Range seek
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
