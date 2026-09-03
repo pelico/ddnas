@@ -263,7 +263,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           <span style="font-size:11px;opacity:.85;white-space:nowrap;text-align:right;overflow:hidden;text-overflow:ellipsis;flex-shrink:0" id="d-stat">初始化中…</span>
           <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center;flex-shrink:0" onclick="forceRefreshSystem()">↻</button>
         </div>
-        <div style="font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-desc">家庭私有云 · 中间件 v1</div>
+        <div style="font-size:12px;opacity:.85;word-break:break-word;line-height:1.4" id="d-desc">家庭私有云 · 中间件 v1</div>
       </div>
       <div class="nas-usage">
         <div class="usage-bar"><i id="d-usage-bar"></i></div>
@@ -525,7 +525,7 @@ async function loadHome(){
       renderNasCard(sys);
       renderMonitor(sys);
       const ms=Date.now()-t0;
-      setStat("ok","已连接 · "+ms+"ms"+(manual?"（手动）":""));
+      setStat("ok","",ms);
     }catch(e){
       homeLoaded=true;
       renderNasCard(null);
@@ -540,28 +540,36 @@ async function loadHome(){
           '可能原因：<b>node 适配器未启用</b> / 内网地址填错 / 容器与 node_exporter 不通 / 服务未启动。<br>'+
           '<a href="/admin/adapter/node" style="color:var(--accent)">🧪 到控制台先点「测试连接」排查</a>'+
         '</div>';
-      setStat("err","未连接："+e.message);
+      setStat("err","");
     }
   };
   await doLoad(false);
   if(pollTimer)clearInterval(pollTimer);
   pollTimer=setInterval(function(){doLoad(false);},10000);
 }
-let lastStat={mode:"",text:"",ts:0};
-function setStat(mode,text){
+let lastStat={mode:"",text:"",ts:0,ms:0};
+/* 连接状态展示：ok=绿圈+延迟 / loading=黄圈+连接中 / err=红圈+检查网络。
+   详细错误信息已在监控卡区域展示，d-stat 只保留简短状态，避免文字过长挤压布局。 */
+function setStat(mode,text,ms){
   var el=document.getElementById("d-stat");if(!el)return;
   var rf=document.getElementById("d-refresh");if(rf)rf.style.display="inline-block";
   var mark=mode==="ok"?"🟢":mode==="err"?"🔴":"🟡";
-  el.textContent=mark+" "+text;
-  lastStat={mode:mode,text:text,ts:Date.now()};
+  var disp;
+  if(mode==="ok"){disp=(ms!=null&&ms!==undefined)?(ms+"ms"):"已连接";}
+  else if(mode==="loading"){disp=text||"连接中…";}
+  else if(mode==="err"){disp="检查网络";}
+  else{disp=text||"";}
+  el.textContent=mark+" "+disp;
+  lastStat={mode:mode,text:disp,ts:Date.now(),ms:ms||0};
 }
 function forceRefreshSystem(){
   if(!window.__doLoad){
     // 懒注入：重新进入首页就会在 doLoad 闭包外没法重入；这里直接重跑一次 fetch
-    var el=document.getElementById("d-stat");if(el)el.textContent="🟡 刷新中…";
+    setStat("loading","刷新中…");
+    var t0=Date.now();
     fetch("/portal/api/node/system",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}).then(function(s){
-      sys=s;renderNasCard(s);renderMonitor(s);setStat("ok","已连接 · 手动刷新");
-    }).catch(function(e){renderNasCard(null);setStat("err","刷新失败："+e.message);});
+      sys=s;renderNasCard(s);renderMonitor(s);setStat("ok","",Date.now()-t0);
+    }).catch(function(e){renderNasCard(null);setStat("err","");});
     return;
   }
   window.__doLoad(true);
