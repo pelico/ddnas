@@ -1,6 +1,8 @@
-// Package server 中的 portal 提供 App 套壳 WebView 加载的用户功能页面：
-// 设备信息、文件浏览/上传，以及通过 JS 桥接原生 ExoPlayer 播放与 SAF 备份。
-// 与 /admin 配置控制台共用同一 cookie 会话，App 端无需存 token。
+// Package server 中的 portal 提供 App 套壳 WebView 加载的用户功能页面。
+// 采用 App 壳子 + JS 桥 的方案：UI 全部在 Docker Web 端实现，App 端仅通过
+// ddnas.playMedia(url) / ddnas.startBackup() 两个原生入口桥接播放和备份。
+// 所有数据请求走同源 /portal/api/*，由 Go 后端反代到内网适配器
+// （node_exporter / AList / ...），客户端永远只访问中间件 :8080，无跨域。
 package server
 
 import (
@@ -8,144 +10,646 @@ import (
 	"net/http"
 )
 
-// portalTmpl 极简内联模板，仅注入主机名用于展示；其余逻辑由前端 JS 完成。
+// portalSrc 内联完整 SPA。仿照用户参考的极空间 App 视觉：
+//   - 顶部：搜索条 + 用户信息（可选），首页渲染 NAS 卡片（型号、存储用量进度条、设备图标）
+//   - 中部：12 格彩色圆角图标宫格（云盘/文件管理/相册/影视/备份/下载/任务中心/回收站...）
+//   - 下方：CPU/内存/网络/硬盘 4 个监控小卡（半环形 or 数字+进度条），10s 轮询刷新
+//   - 文件页：面包屑、返回上级、文件列表（目录/文件图标 + 大小/修改时间 + 播放按钮）、上传 + 刷新
+//   - 我的页：当前中间件信息 + 备份入口（调 JS 桥） + 控制台入口
+//   - 底部：三栏导航（首页 / 文件 / 我的）
 const portalSrc = `<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#f3f5fa">
 <title>DDNAS</title>
 <style>
-:root{--bg:#0f1115;--card:#1a1d24;--fg:#e6e6e6;--muted:#8a8f99;--accent:#4f9cff;--ok:#3ecf8e;--warn:#f5a623;--err:#ef5b5b;--bd:#2a2e37}
+:root{
+  --bg:#f3f5fa;
+  --card:#ffffff;
+  --fg:#1a1d29;
+  --muted:#8a94a6;
+  --muted2:#b7bfcc;
+  --accent:#3478f6;
+  --ok:#25c275;
+  --warn:#f5a623;
+  --err:#ef5b5b;
+  --bd:#eaeef5;
+  --surface2:#f6f8fc;
+  --chip:#eef2fa;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e1018;--card:#171a25;--fg:#edf0f6;--muted:#8e95a7;--muted2:#5b6375;
+    --bd:#252a39;--surface2:#12151f;--chip:#1a2030;
+  }
+}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
-body{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);overscroll-behavior:none}
-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--card);border-bottom:1px solid var(--bd);padding-top:max(12px,env(safe-area-inset-top))}
-header .brand{font-weight:700;letter-spacing:.5px}
-header .host{color:var(--muted);font-size:12px;margin-left:8px}
-.tabs{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--bg);position:sticky;top:48px}
-.tabs button{flex:1;background:transparent;border:1px solid var(--bd);color:var(--muted);border-radius:10px;padding:9px;font-size:14px}
-.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-.view{padding:14px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
-.card h3{margin:0 0 10px;font-size:15px}
-.bar{height:8px;border-radius:6px;background:#0c0e12;overflow:hidden;margin:4px 0 8px}
-.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--ok))}
-.kv{display:flex;justify-content:space-between;gap:8px;padding:5px 0;font-size:13px;border-bottom:1px dashed var(--bd)}
-.kv:last-child{border-bottom:0}
-.kv .k{color:var(--muted)}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.row{display:flex;align-items:center;gap:10px}
-.fab{position:fixed;right:16px;bottom:max(20px,env(safe-area-inset-bottom));z-index:6;width:52px;height:52px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:22px;box-shadow:0 6px 18px rgba(0,0,0,.5)}
-.crumb{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:8px 0;font-size:13px;color:var(--muted)}
-.crumb a{color:var(--accent)}
-.list{display:flex;flex-direction:column;gap:8px}
-.item{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--bd);border-radius:10px;background:#0c0e12}
-.item:active{background:#11141a}
-.item .ic{font-size:18px;width:22px;text-align:center}
-.item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
-.item .mt{color:var(--muted);font-size:12px;white-space:nowrap}
-.item button{border:1px solid var(--bd);background:transparent;color:var(--accent);border-radius:8px;padding:6px 10px;font-size:13px}
-.empty,.loading,.err{padding:24px;text-align:center;color:var(--muted)}
-.err{color:var(--err)}
-.toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:var(--card);border:1px solid var(--bd);color:var(--fg);padding:8px 14px;border-radius:10px;font-size:13px;z-index:9;opacity:0;transition:opacity .2s}
-.toast.on{opacity:1}
-</style>
-</head><body>
-<header><div class="row"><span class="brand">DDNAS</span><span class="host">{{.Host}}</span></div>
-<div class="row"><a style="font-size:13px;color:var(--muted)" href="/admin/">← 控制台</a>
-<button class="fab" title="备份" onclick="ddnas.startBackup()">&#128190;</button></div></header>
-<nav class="tabs"><button id="tab-dev" class="on" onclick="showTab('dev')">设备</button><button id="tab-files" onclick="showTab('files')">文件</button></nav>
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);overscroll-behavior:none;font-size:14px;line-height:1.5;
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:calc(env(safe-area-inset-bottom) + 72px);
+}
+a{color:var(--accent);text-decoration:none}
+button{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer}
 
-<section id="view-dev" class="view">
-  <div id="dev-body" class="loading">加载中…</div>
-</section>
-<section id="view-files" class="view" hidden>
-  <div class="crumb" id="crumb"></div>
-  <div style="display:flex;gap:8px;margin-bottom:10px">
-    <button class="fab" style="position:static;width:auto;height:auto;border-radius:8px;padding:8px 12px;font-size:14px" onclick="goUp()">↑ 上级</button>
-    <label class="fab" style="position:static;width:auto;height:auto;border-radius:8px;padding:8px 12px;font-size:14px;cursor:pointer">+ 上传<input type="file" id="upfile" hidden onchange="upload(this)"></label>
+/* ===== 顶栏（仅首页、文件页显示搜索/返回，我的页隐藏） ===== */
+.topbar{
+  position:sticky;top:0;z-index:10;background:var(--bg);
+  padding:10px 14px 12px;border-bottom:1px solid transparent;
+}
+.search{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surface2);border-radius:999px;padding:9px 14px;
+  color:var(--muted);font-size:13px;border:1px solid var(--bd);
+}
+.search .ic{font-size:15px}
+.top-actions{display:flex;gap:10px;margin-top:10px;align-items:center;justify-content:flex-end}
+.icon-btn{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface2);border:1px solid var(--bd);font-size:15px}
+
+.page{padding:4px 14px 12px}
+
+/* ===== NAS 卡片（参考极空间：头像 / 设备名 / 存储用量条 / 设备图） ===== */
+.nas-card{
+  background:linear-gradient(135deg,#3478f6 0%,#5a93ff 100%);
+  color:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(52,120,246,.22);
+}
+@media (prefers-color-scheme: dark){
+  .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%);box-shadow:none}
+}
+.nas-card::after{
+  content:"";position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08);
+}
+.nas-user{display:flex;align-items:center;gap:10px;margin-bottom:10px;position:relative;z-index:1}
+.avatar{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.25);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.nas-user .meta{flex:1;min-width:0}
+.nas-user .name{font-weight:600;font-size:14px}
+.nas-user .role{font-size:11px;opacity:.8;margin-top:2px}
+.nas-title{display:flex;align-items:flex-start;justify-content:space-between;position:relative;z-index:1;gap:10px}
+.nas-title .txt{flex:1;min-width:0}
+.nas-title .mod{font-size:20px;font-weight:700;letter-spacing:.5px}
+.nas-title .tag{display:inline-block;margin-left:8px;background:rgba(255,255,255,.2);font-size:11px;padding:2px 8px;border-radius:999px;vertical-align:middle}
+.nas-usage{margin-top:12px;position:relative;z-index:1}
+.usage-bar{height:8px;background:rgba(255,255,255,.22);border-radius:999px;overflow:hidden}
+.usage-bar>i{display:block;height:100%;background:#fff;width:0;transition:width .5s}
+.usage-meta{display:flex;justify-content:space-between;margin-top:6px;font-size:12px;opacity:.92}
+.device-art{font-size:42px;filter:drop-shadow(0 4px 6px rgba(0,0,0,.18));line-height:1}
+
+/* ===== 功能宫格：4 列 × 3 行 圆角图标 + 文字 ===== */
+.grid{
+  background:var(--card);border:1px solid var(--bd);border-radius:18px;
+  padding:14px 6px 6px;margin-bottom:14px;
+  display:grid;grid-template-columns:repeat(4,1fr);gap:4px 0;
+}
+.cell{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:8px 4px 12px;user-select:none}
+.cell:active{opacity:.6}
+.cell .icon{
+  width:46px;height:46px;border-radius:14px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:22px;margin-bottom:6px;color:#fff;
+}
+.cell .label{font-size:12px;color:var(--fg)}
+.cell.disabled .label{color:var(--muted2)}
+.cell.disabled .icon{background:#d7dbe5 !important}
+/* 12 种配色 */
+.c1{background:linear-gradient(135deg,#5aa4ff,#3478f6)}
+.c2{background:linear-gradient(135deg,#38c77a,#1aa35f)}
+.c3{background:linear-gradient(135deg,#ff8c42,#ef6a2b)}
+.c4{background:linear-gradient(135deg,#8c6bff,#6647e6)}
+.c5{background:linear-gradient(135deg,#ff5c7e,#ef3a63)}
+.c6{background:linear-gradient(135deg,#4cc9d4,#2da9b5)}
+.c7{background:linear-gradient(135deg,#f5c34a,#d99e1b)}
+.c8{background:linear-gradient(135deg,#6aa9ff,#4a83e0)}
+.c9{background:linear-gradient(135deg,#7e8bff,#5c6be6)}
+.c10{background:linear-gradient(135deg,#ff9c6a,#e07b4a)}
+.c11{background:linear-gradient(135deg,#43c5a2,#25a082)}
+.c12{background:linear-gradient(135deg,#a0a6b3,#7c8392)}
+
+/* ===== 监控 4 卡（2×2）：半环 + 指标 ===== */
+.monitor{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;
+}
+.m-card{
+  background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:12px 14px;position:relative;
+}
+.m-card .title{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.m-card .title .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.m-card .title.err .dot{background:var(--warn)}
+.m-card .row{display:flex;align-items:flex-end;justify-content:space-between;margin-top:4px}
+.m-card .num{font-size:22px;font-weight:700;letter-spacing:.5px}
+.m-card .sub{font-size:11px;color:var(--muted);margin-bottom:3px}
+/* 小半圆进度：用 clip + 伪元素，不依赖 SVG */
+.ring{
+  --p:0%; --c:#3478f6; --sz:38px;
+  width:var(--sz);height:calc(var(--sz)/2);overflow:hidden;position:relative;
+}
+.ring::before{
+  content:"";position:absolute;inset:0;border-radius:var(--sz) var(--sz) 0 0 / 100% 100% 0 0;
+  border:6px solid var(--bd);border-bottom:0;box-sizing:border-box;
+}
+.ring::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:100%;
+  background:conic-gradient(from 180deg, var(--c) calc(var(--p) * 1deg / 1.8), transparent 0);
+  clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
+  mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px + 1px));
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 6px + 1px));
+}
+.ring.ok{--c:#25c275}
+.ring.warn{--c:#f5a623}
+.ring.err{--c:#ef5b5b}
+.ring.two{--c:#4cc9d4}
+.m-kv{display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+.m-kv .k{font-size:10px;color:var(--muted)}
+.m-kv .v{font-size:12px}
+
+/* 错误 / 未启用提示卡 */
+.tip-card{
+  background:var(--card);border:1px dashed var(--bd);border-radius:14px;padding:14px;
+  color:var(--muted);font-size:13px;margin-bottom:14px;text-align:center;
+}
+
+/* ===== 文件页 ===== */
+.file-bar{
+  position:sticky;top:0;z-index:9;background:var(--bg);padding:10px 14px 12px;
+  display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd);
+}
+.file-top{display:flex;align-items:center;gap:10px}
+.file-top .back{width:34px;height:34px;border-radius:10px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:16px}
+.file-top .path{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-top .up{background:var(--accent);color:#fff;border-radius:10px;padding:8px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.crumb{display:flex;flex-wrap:wrap;gap:2px 4px;color:var(--muted);font-size:12px;overflow-x:auto}
+.crumb a{color:var(--accent);white-space:nowrap}
+.crumb .sep{color:var(--muted2)}
+#files-body{padding:4px 14px 12px}
+.flist{display:flex;flex-direction:column;gap:6px}
+.fitem{
+  display:flex;align-items:center;gap:12px;padding:11px 12px;
+  background:var(--card);border:1px solid var(--bd);border-radius:14px;
+}
+.fitem:active{background:var(--surface2)}
+.fic{width:40px;height:40px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;background:var(--chip);flex-shrink:0}
+.fic.dir{background:linear-gradient(135deg,#ffd783,#f5a623);color:#fff}
+.fic.video{background:linear-gradient(135deg,#a06bff,#6f46e6);color:#fff}
+.fic.audio{background:linear-gradient(135deg,#4cc9d4,#2da9b5);color:#fff}
+.fic.image{background:linear-gradient(135deg,#ff83a6,#ef4a75);color:#fff}
+.fic.doc{background:linear-gradient(135deg,#5aa4ff,#3478f6);color:#fff}
+.fn{flex:1;min-width:0}
+.fn .nm{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fn .mt{font-size:11px;color:var(--muted);margin-top:2px}
+.fbtn{color:var(--accent);font-size:12px;padding:6px 10px;border-radius:8px;background:var(--chip)}
+.empty,.loading,.err{padding:32px 16px;text-align:center;color:var(--muted)}
+.err{color:var(--err)}
+
+/* ===== 我的页 ===== */
+.me{padding:10px 14px 16px;display:flex;flex-direction:column;gap:12px}
+.me-head{
+  display:flex;align-items:center;gap:12px;
+  background:linear-gradient(135deg,#3478f6,#5a93ff);color:#fff;border-radius:18px;padding:16px;
+}
+@media (prefers-color-scheme: dark){
+  .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
+}
+.me-head .av{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.22);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:20px}
+.me-head .t{font-size:16px;font-weight:600}
+.me-head .s{font-size:12px;opacity:.85;margin-top:2px}
+.section{background:var(--card);border:1px solid var(--bd);border-radius:16px;overflow:hidden}
+.sitem{display:flex;align-items:center;gap:12px;padding:14px;position:relative}
+.sitem+.sitem::before{content:"";position:absolute;left:52px;right:0;top:0;border-top:1px solid var(--bd)}
+.sitem .ic{width:32px;height:32px;border-radius:10px;background:var(--chip);display:inline-flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.sitem .lbl{flex:1;min-width:0;font-size:14px}
+.sitem .desc{font-size:12px;color:var(--muted);margin-top:2px}
+.sitem .arr{color:var(--muted2);font-size:16px}
+.sitem.big .ic{background:linear-gradient(135deg,#38c77a,#1aa35f);color:#fff}
+.sitem.big .lbl{font-weight:600}
+
+/* ===== 底部三栏导航 ===== */
+.tabbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:20;
+  background:var(--card);border-top:1px solid var(--bd);
+  display:grid;grid-template-columns:repeat(3,1fr);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.tabbar button{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:8px 0 6px;color:var(--muted2);
+}
+.tabbar button .ic{font-size:22px;line-height:1}
+.tabbar button .lb{font-size:11px}
+.tabbar button.on{color:var(--accent)}
+
+/* ===== 通用 ===== */
+.hidden{display:none !important}
+.toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:10px;font-size:13px;z-index:99;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted2);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ========== 首页 ========== -->
+<section id="view-home">
+  <div class="topbar">
+    <div class="search" onclick="toast('搜索后续扩展')"><span class="ic">🔎</span>搜索设备、文件、相册…</div>
   </div>
-  <div id="files-body" class="loading">加载中…</div>
+  <div class="page">
+
+    <div class="nas-card">
+      <div class="nas-user">
+        <span class="avatar" id="u-avatar">A</span>
+        <div class="meta">
+          <div class="name" id="u-name">admin</div>
+          <div class="role" id="u-role">管理员</div>
+        </div>
+      </div>
+      <div class="nas-title">
+        <div class="txt">
+          <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
+          <div style="height:10px"></div>
+          <div style="font-size:12px;opacity:.85" id="d-desc">家庭私有云 · 中间件 v1</div>
+        </div>
+        <div class="device-art">🖴</div>
+      </div>
+      <div class="nas-usage">
+        <div class="usage-bar"><i id="d-usage-bar"></i></div>
+        <div class="usage-meta">
+          <span>已使用 <b id="d-used">0</b></span>
+          <span><b id="d-total">0</b> 可用容量 <b id="d-free">0</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" id="feat-grid"></div>
+
+    <div class="monitor" id="monitor-grid"></div>
+
+  </div>
 </section>
+
+<!-- ========== 文件页 ========== -->
+<section id="view-files" class="hidden">
+  <div class="file-bar">
+    <div class="file-top">
+      <button class="back" onclick="goUp()" title="上级">←</button>
+      <div class="path" id="file-path">/</div>
+      <button class="up" onclick="document.getElementById('upfile').click()">⬆ 上传</button>
+      <input type="file" id="upfile" hidden onchange="upload(this)">
+    </div>
+    <div class="crumb" id="crumb"></div>
+  </div>
+  <div id="files-body">
+    <div class="loading"><span class="spin"></span>加载中…</div>
+  </div>
+</section>
+
+<!-- ========== 我的页 ========== -->
+<section id="view-me" class="hidden">
+  <div class="me">
+    <div class="me-head">
+      <span class="av">A</span>
+      <div>
+        <div class="t">admin</div>
+        <div class="s" id="me-host">—</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sitem big" onclick="ddnas.startBackup()">
+        <span class="ic">💾</span>
+        <div class="lbl">手机备份<div class="desc">选择本地目录，递归上传到中间件 /手机备份/时间戳/</div></div>
+        <span class="arr">›</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <a href="/admin/" class="sitem" style="color:inherit;text-decoration:none">
+        <span class="ic">⚙️</span>
+        <div class="lbl">控制台<div class="desc">适配器配置、App 令牌、连接信息</div></div>
+        <span class="arr">›</span>
+      </a>
+      <a href="/admin/adapter/node" class="sitem" style="color:inherit;text-decoration:none">
+        <span class="ic">🖥</span>
+        <div class="lbl">设备监控配置<div class="desc">node_exporter 地址等</div></div>
+        <span class="arr">›</span>
+      </a>
+      <a href="/admin/adapter/openlist" class="sitem" style="color:inherit;text-decoration:none">
+        <span class="ic">📁</span>
+        <div class="lbl">文件服务配置<div class="desc">AList/OpenList 地址、令牌、根路径</div></div>
+        <span class="arr">›</span>
+      </a>
+    </div>
+
+    <div class="section">
+      <div class="sitem">
+        <span class="ic">ℹ️</span>
+        <div class="lbl">版本<div class="desc">DDNAS v1.1 · 构建 {{.Build}}</div></div>
+      </div>
+      <div class="sitem">
+        <span class="ic">🛰</span>
+        <div class="lbl">主机<div class="desc" id="me-host2">{{.Host}}</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 底部 Tab ========== -->
+<nav class="tabbar">
+  <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
+  <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
+  <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
+</nav>
 
 <div id="toast" class="toast"></div>
 
 <script>
-const MEDIA=/(mp4|mkv|mov|avi|webm|m4v|mp3|flac|aac|m4a|wav|ts)$/i;
-let cur=""; // 当前目录相对路径（无 root 前缀），"" 表示根
-let tab="dev";
-function showTab(t){tab=t;document.getElementById("tab-dev").classList.toggle("on",t==="dev");document.getElementById("tab-files").classList.toggle("on",t==="files");document.getElementById("view-dev").hidden=t!=="dev";document.getElementById("view-files").hidden=t!=="files";if(t==="dev"&&!devLoaded)loadDev();if(t==="files"&&!filesLoaded)loadFiles("");}
-async function loadDev(){
-  const b=document.getElementById("dev-body");b.className="loading";b.textContent="加载中…";
+/* ========= 工具 ========= */
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
+function fmtBytes(v){v=+v||0;const u=["B","KB","MB","GB","TB","PB"];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v>=100?0:1)+" "+u[i];}
+function pct(v){return Math.max(0,Math.min(100,+v||0)).toFixed(1)+"%";}
+function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1800);}
+function joinPath(base,name){base=base||"";name=name||"";if(!base)return name;return base.replace(/\/+$/,"")+"/"+name.replace(/^\/+/,"");}
+function mediaExt(name){const ext=(String(name||"").split(".").pop()||"").toLowerCase();
+  if(/^(mp4|mkv|mov|avi|webm|m4v|ts|m3u8|wmv|flv|rmvb)$/.test(ext))return"video";
+  if(/^(mp3|flac|aac|m4a|wav|ogg|ape|wma)$/.test(ext))return"audio";
+  if(/^(jpg|jpeg|png|gif|webp|bmp|heic|raw)$/.test(ext))return"image";
+  if(/^(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md|csv|zip|rar|7z|tar|gz)$/.test(ext))return"doc";
+  return "other";
+}
+if(typeof ddnas==="undefined"){
+  window.ddnas={
+    playMedia(u){toast("原生桥不可用，播放地址：\n"+u);},
+    startBackup(){toast("原生桥不可用，备份功能请在 App 内使用。");window.open("/admin/","_self");}
+  };
+}
+
+/* ========= 三栏切换 ========= */
+let curTab="home";
+function setTab(t){
+  curTab=t;
+  ["home","files","me"].forEach(k=>{
+    document.getElementById("view-"+k).classList.toggle("hidden",k!==t);
+    document.getElementById("tab-"+k).classList.toggle("on",k===t);
+  });
+  if(t==="home"&&!homeLoaded)loadHome();
+  if(t==="files"&&!filesLoadedEver)loadFiles("");
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;}
+  // 滚动回到顶部
+  window.scrollTo({top:0,behavior:"instant"});
+}
+
+/* ========= 功能宫格（12 格） ========= */
+// icon 为 emoji（无外部依赖，镜像小体积）；color 类名映射上面的配色；cap 检查对应适配器能力
+const FEATURES=[
+  {id:"cloud",label:"云盘",icon:"📁",cls:"c1",cap:"files",on(){setTab("files");}},
+  {id:"files",label:"文件管理",icon:"🗂",cls:"c2",cap:"files",on(){setTab("files");}},
+  {id:"album",label:"拾光相册",icon:"🌸",cls:"c3",cap:"",on(){toast("相册模块后续扩展");}},
+  {id:"video",label:"拾光影视",icon:"▶️",cls:"c4",cap:"",on(){toast("影视模块后续扩展");}},
+  {id:"cloud2",label:"百度网盘",icon:"☁️",cls:"c5",cap:"",on(){toast("第三方网盘后续扩展");}},
+  {id:"backup",label:"备份管理",icon:"💾",cls:"c6",cap:"backup",on(){ddnas.startBackup();}},
+  {id:"safe",label:"保险箱",icon:"🔒",cls:"c7",cap:"",on(){toast("保险箱后续扩展");}},
+  {id:"stars",label:"星光豆",icon:"😊",cls:"c8",cap:"",on(){toast("运营位预留");}},
+  {id:"dl",label:"离线下载",icon:"⬇️",cls:"c9",cap:"download",on(){toast("下载器模块后续扩展");}},
+  {id:"task",label:"任务中心",icon:"🔄",cls:"c10",cap:"",on(){toast("任务中心后续扩展");}},
+  {id:"trash",label:"回收站",icon:"🗑",cls:"c11",cap:"",on(){toast("回收站后续扩展");}},
+  {id:"all",label:"全部应用",icon:"⊞",cls:"c12",cap:"",on(){toast("全部应用后续扩展");}},
+];
+let caps=new Set();
+function renderGrid(){
+  const g=document.getElementById("feat-grid");
+  g.innerHTML=FEATURES.map(function(f){
+    const ok=!f.cap||caps.has(f.cap);
+    return '<div class="cell '+(ok?'':'disabled')+'" data-id="'+f.id+'"><div class="icon '+f.cls+'">'+f.icon+'</div><div class="label">'+f.label+'</div></div>';
+  }).join("");
+  g.querySelectorAll(".cell").forEach(function(el){
+    el.addEventListener("click",function(){
+      const f=FEATURES.find(function(x){return x.id===el.dataset.id;});if(!f)return;
+      const ok2=!f.cap||caps.has(f.cap);
+      if(!ok2){toast("功能未启用：请在控制台启用对应适配器");return;}
+      f.on();
+    });
+  });
+}
+
+/* ========= 监控数据渲染 ========= */
+let sys=null;        // 上次 /api/node/system 结果
+let homeLoaded=false;
+let pollTimer=null;
+
+// 判断圆环配色
+function ringClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
+// 监控格：conic 半环显示使用率，右侧显示具体数值+辅助
+function mCardHTML(opts){
+  const p=Math.max(0,Math.min(100,+opts.percent||0));
+  // 180deg 半环，p% 对应 p*1.8 deg
+  const rows=(opts.metrics||[]).map(function(m){return '<span class="k">'+esc(m.k)+'</span><span class="v">'+esc(m.v)+'</span>';}).join("");
+  return '<div class="m-card">'+
+    '<div class="title '+(opts.err?'err':'')+'"><span class="dot"></span>'+esc(opts.title)+'</div>'+
+    '<div class="row">'+
+      '<div><div class="ring '+ringClass(p)+' '+(opts.color||'')+'" style="--p:'+p.toFixed(1)+'"></div></div>'+
+      '<div class="m-kv">'+rows+'</div>'+
+    '</div>'+
+  '</div>';
+}
+
+async function loadHome(){
+  homeLoaded=false;  // 每次切到首页都重拉一次初始
+  // 1) 发现适配器能力
+  const capList=[];
   try{
-    const r=await fetch("/portal/api/node/system");if(!r.ok)throw new Error("HTTP "+r.status);
-    const s=await r.json();devLoaded=true;renderDev(s);
-  }catch(e){b.className="err";b.textContent="设备信息适配器未启用或获取失败："+e.message;}
+    const r=await fetch("/portal/api/adapters_discovery");
+    if(r.ok){const s=await r.json();(s.adapters||[]).forEach(a=>{if(a.enabled&&Array.isArray(a.capabilities))a.capabilities.forEach(c=>caps.add(c));capList.push(s);});}
+  }catch(e){}
+  renderGrid();
+
+  // 2) 系统信息立即拉一次 + 10s 轮询
+  const doLoad=async ()=>{
+    const box=document.getElementById("monitor-grid");
+    try{
+      const r=await fetch("/portal/api/node/system");
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      sys=await r.json();
+      homeLoaded=true;
+      renderNasCard(sys);
+      renderMonitor(sys);
+    }catch(e){
+      homeLoaded=true;
+      renderNasCard(null);
+      box.innerHTML='<div class="tip-card">未启用 node 适配器或获取失败：'+esc(e.message)+'<br><a href="/admin/adapter/node" style="color:var(--accent)">前往配置 -></a></div>';
+    }
+  };
+  await doLoad();
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(doLoad,10000);
 }
-function pct(v){return (v||0).toFixed(1)+"%";}
-function fmtBytes(v){v=v||0;const u=["B","KB","MB","GB","TB"];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v>=100?0:1)+" "+u[i];}
-function uptime(s){s=s||0;const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+"天":"")+(h?h+"时":"")+(m?m+"分":"");}
-function renderDev(s){
-  const b=document.getElementById("dev-body");
-  let h="";
-  h+=card("概览",kv("主机",esc(s.hostname))+"<br>"+kv("系统",esc(s.os))+"<br>"+kv("内核",esc(s.kernel))+"<br>"+kv("架构",esc(s.arch))+"<br>"+kv("运行时长",uptime(s.uptime_seconds)));
-  if(s.cpu)h+=card("CPU",kv("核心",s.cpu.cores)+"<br>"+kv("负载1/5/15",+(s.cpu.load1||0).toFixed(2)+" / "+(s.cpu.load5||0).toFixed(2)+" / "+(s.cpu.load15||0).toFixed(2))+bar(s.cpu.usage_percent)+"<br>"+kv("使用率",pct(s.cpu.usage_percent)));
-  if(s.memory)h+=card("内存",kv("已用/总",fmtBytes(s.memory.used_bytes)+" / "+fmtBytes(s.memory.total_bytes))+bar(s.memory.usage_percent)+"<br>"+kv("使用率",pct(s.memory.usage_percent)));
-  if(s.disks&&s.disks.length)h+=card("磁盘",s.disks.map(d=>kv("挂载",esc(d.mountpoint)+" ("+esc(d.fstype)+")")+"<br>"+kv("已用/总",fmtBytes(d.used_bytes)+" / "+fmtBytes(d.total_bytes))+bar(d.usage_percent)+"<br>"+kv("使用率",pct(d.usage_percent))).join("<hr style='border-color:var(--bd)'>"));
-  if(s.network&&s.network.length)h+=card("网络",s.network.map(n=>kv("网卡",esc(n.device))+"<br>"+kv("接收/发送",fmtBytes(n.rx_bytes)+" / "+fmtBytes(n.tx_bytes)).join("<hr style='border-color:var(--bd)'>"));
-  if(!h)h="<div class='empty'>无设备信息</div>";
-  b.className="";b.innerHTML=h;
+
+/* NAS 卡片渲染：从 disks 汇总总容量，用 hostname/os 拼接展示 */
+function renderNasCard(s){
+  const modelEl=document.getElementById("d-model");
+  const netEl=document.getElementById("d-net");
+  const usedEl=document.getElementById("d-used");
+  const totalEl=document.getElementById("d-total");
+  const freeEl=document.getElementById("d-free");
+  const barEl=document.getElementById("d-usage-bar");
+  const descEl=document.getElementById("d-desc");
+  if(!s){
+    modelEl.textContent="DDNAS";netEl.textContent="未连接";
+    usedEl.textContent="-";totalEl.textContent="-";freeEl.textContent="-";barEl.style.width="0%";
+    descEl.textContent="启用并配置 node 适配器后显示设备信息";
+    return;
+  }
+  modelEl.textContent=s.hostname?esc(s.hostname.toUpperCase()):"DDNAS";
+  const isWan=false;netEl.textContent=isWan?"外网":"内网";
+  let totalBytes=0,usedBytes=0;
+  (s.disks||[]).forEach(d=>{totalBytes+=+d.total_bytes||0;usedBytes+=+d.used_bytes||0;});
+  usedEl.textContent=fmtBytes(usedBytes);totalEl.textContent=fmtBytes(totalBytes);
+  freeEl.textContent=fmtBytes(Math.max(0,totalBytes-usedBytes));
+  const p=totalBytes>0?usedBytes/totalBytes*100:0;
+  barEl.style.width=p.toFixed(1)+"%";
+  const parts=[];if(s.os)parts.push(esc(s.os));if(s.arch)parts.push(esc(s.arch));if(s.kernel)parts.push(esc(String(s.kernel).slice(0,22)));
+  const up=+s.uptime_seconds||0;const d=Math.floor(up/86400),h=Math.floor(up%86400/3600),m=Math.floor(up%3600/60);
+  parts.push("运行 "+(d?d+"天":"")+(h?h+"时":"")+m+"分");
+  descEl.textContent=parts.join(" · ")||"—";
 }
-function card(t,c){return '<div class="card"><h3>'+esc(t)+'</h3>'+c+'</div>';}
-function kv(k,v){return '<div class="kv"><span class="k">'+esc(k)+'</span><span>'+v+'</span></div>';}
-function bar(v){v=v||0;return '<div class="bar"><i style="width:'+Math.min(100,v).toFixed(1)+'%"></i></div>';}
-let devLoaded=false,filesLoaded=false;
-async function loadFiles(p){
-  cur=p;const b=document.getElementById("files-body");b.className="loading";b.textContent="加载中…";
-  renderCrumb(p);
-  try{
-    const r=await fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(p));if(!r.ok)throw new Error("HTTP "+r.status);
-    const s=await r.json();filesLoaded=true;
-    const items=(s.items||[]).slice().sort((a,b)=>(b.is_dir?1:0)-(a.is_dir?1:0)||String(a.name).localeCompare(String(b.name)));
-    if(!items.length){b.className="empty";b.textContent="空目录";return;}
-    b.className="";b.innerHTML='<div class="list">'+items.map(it=>{
-      const name=esc(it.name),dir=joinPath(p,it.name);
-      if(it.is_dir){return '<div class="item" onclick="loadFiles(\''+escJS(dir)+'\')"><span class="ic">&#128193;</span><span class="nm">'+name+'</span></div>';}
-      const ext=(it.name.split('.').pop()||"").toLowerCase();
-      if(MEDIA.test(ext)){return '<div class="item"><span class="ic">&#127916;</span><span class="nm">'+name+'</span><span class="mt">'+fmtBytes(it.size)+'</span><button onclick="play(\''+escJS(dir)+'\')">播放</button></div>';}
-      return '<div class="item"><span class="ic">&#128196;</span><span class="nm">'+name+'</span><span class="mt">'+fmtBytes(it.size)+'</span></div>';
-    }).join("")+'</div>';
-  }catch(e){b.className="err";b.textContent="文件适配器未启用或获取失败："+e.message;}
+
+function renderMonitor(s){
+  const box=document.getElementById("monitor-grid");
+  if(!s){box.innerHTML="";return;}
+  const cpu=s.cpu||{};
+  const mem=s.memory||{};
+  const net=(s.network||[])[0]||{};
+  const disk=(s.disks||[])[0]||{};
+
+  // CPU：负载+使用率
+  const cpuPct=+cpu.usage_percent||0;
+  const cpuHtml=mCardHTML({
+    title:"CPU",percent:cpuPct,color:"",
+    metrics:[
+      {k:"使用率",v:cpuPct.toFixed(1)+"%"},
+      {k:"负载",v: (+cpu.load1||0).toFixed(2)+"/"+(+cpu.load5||0).toFixed(2)+"/"+(+cpu.load15||0).toFixed(2)},
+      {k:"核心",v: cpu.cores?cpu.cores+"核":"—"}
+    ]
+  });
+  // 内存：已用/总 + 使用率
+  const memPct=+mem.usage_percent||0;
+  const memHtml=mCardHTML({
+    title:"内存",percent:memPct,color:"two",
+    metrics:[
+      {k:"使用率",v:memPct.toFixed(1)+"%"},
+      {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
+      {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
+    ]
+  });
+  // 网络：上行/下行（以 KB/s 显示，无历史暂显示累计字节；node_exporter 原生是累积 counter）
+  // 注：单次快照拿不到速率。显示"累计收/发"更准确。
+  const netHtml=mCardHTML({
+    title:"网络",percent:0,color:"ok",
+    metrics:[
+      {k:"接收",v:fmtBytes(+net.rx_bytes||0)},
+      {k:"发送",v:fmtBytes(+net.tx_bytes||0)},
+      {k:"网卡",v:esc(net.device||"—")}
+    ]
+  });
+  // 硬盘：首个挂载点使用率 + 读写（node_exporter 无统一读写指标，先空出显示使用率/已用/总量）
+  const diskPct=+disk.usage_percent||0;
+  const diskHtml=mCardHTML({
+    title:"硬盘",percent:diskPct,color:"warn",
+    metrics:[
+      {k:"使用率",v:diskPct.toFixed(1)+"%"},
+      {k:"已用/总",v:fmtBytes(+disk.used_bytes||0)+" / "+fmtBytes(+disk.total_bytes||0)},
+      {k:"挂载",v:esc(disk.mountpoint||"—")}
+    ]
+  });
+  box.innerHTML=cpuHtml+memHtml+netHtml+diskHtml;
 }
-function joinPath(base,name){return base?base+"/"+name:name;}
-function goUp(){if(!cur)return;const i=cur.lastIndexOf("/");loadFiles(i<0?"":cur.slice(0,i));}
+
+/* ========= 文件浏览 ========= */
+let curFiles="";
+let filesLoadedEver=false;
+function loadFiles(p){
+  curFiles=p||"";filesLoadedEver=true;
+  const body=document.getElementById("files-body");
+  const pathEl=document.getElementById("file-path");
+  pathEl.textContent="/"+(curFiles||"");
+  renderCrumb(curFiles);
+  body.innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
+  fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
+    if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
+  }).then(resp=>{
+    const items=(resp.items||[]).slice().sort((a,b)=>{
+      const da=a.is_dir||a.type==="folder"||(a.is_dir==null&&String(a.name||"").lastIndexOf(".")<0)?1:0;
+      const db=b.is_dir||b.type==="folder"||(b.is_dir==null&&String(b.name||"").lastIndexOf(".")<0)?1:0;
+      if(da!==db)return db-da;return String(a.name||"").localeCompare(String(b.name||""));
+    });
+    if(!items.length){body.innerHTML='<div class="empty">空目录</div>';return;}
+    body.innerHTML='<div class="flist">'+items.map(function(it){
+      const name=esc(it.name||"");
+      const isDir=!!(it.is_dir||it.type==="folder");
+      const size=+it.size||0;
+      const mt=it.modified||it.modified_at||it.created||"";
+      const sub=(isDir?"":fmtBytes(size))+(mt?" / "+String(mt).slice(0,16):"");
+      const rel=joinPath(curFiles,it.name||"");
+      if(isDir){
+        return '<div class="fitem" data-rel="'+esc(rel)+'" data-type="dir">'+
+          '<div class="fic dir">📂</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+
+          '<button class="fbtn" data-type="enter">进入</button></div>';
+      }
+      var kind=mediaExt(it.name||"");
+      var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
+      var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
+      var btn=(kind==="video"||kind==="audio")
+        ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-type="play">播放</button>'
+        :'<button class="fbtn" data-type="noop">查看</button>';
+      return '<div class="fitem" data-type="file">'+
+        '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
+    }).join("")+"</div>";
+
+    body.querySelectorAll(".fitem").forEach(el=>{
+      const t=el.dataset.type;
+      const rel=el.dataset.rel||"";
+      if(t==="dir"){
+        el.addEventListener("click",e=>{
+          if(e.target.dataset.type==="enter"||e.target.tagName!=="BUTTON")loadFiles(rel);
+        });
+      }
+    });
+    body.querySelectorAll('button[data-type="play"]').forEach(b=>{
+      b.addEventListener("click",e=>{
+        e.stopPropagation();play(b.dataset.rel||"");
+      });
+    });
+  }).catch(function(e){
+    body.innerHTML='<div class="err">文件适配器未启用或获取失败：'+esc(e.message)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
+  });
+}
+function goUp(){if(!curFiles)return;const i=curFiles.lastIndexOf("/");loadFiles(i<0?"":curFiles.slice(0,i));}
 function renderCrumb(p){
-  const c=document.getElementById("crumb");let h='<a onclick="loadFiles(\'\')">根</a>';
-  if(p){const segs=p.split("/");let acc="";segs.forEach((s,i)=>{acc=acc?acc+"/"+s:s;h+='<span>/</span><a onclick="loadFiles(\''+escJS(acc)+'\')">'+esc(s)+'</a>';});}
+  const c=document.getElementById("crumb");
+  let h='<a onclick="loadFiles(\\'\\')">根</a>';
+  if(p){const segs=p.split("/");let acc="";segs.forEach((s,i)=>{acc=acc?acc+"/"+s:s;h+='<span class="sep">/</span><a onclick="loadFiles(\\''+escJS(acc)+'\\')">'+esc(s)+'</a>';});}
   c.innerHTML=h;
 }
 function play(relPath){
-  // 逐段 encodeURIComponent，保留 "/" 作为路径分隔，Go {path...} 会正确捕获。
+  if(!relPath)return;
+  // 逐段 encodeURIComponent，保留 "/" 分隔，Go {path...} 会正确捕获多段
   const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
   ddnas.playMedia(url);
 }
 async function upload(input){
-  const f=input.files[0];if(!f)return;
-  const dest=joinPath(cur,f.name);toast("上传中…");
+  const f=input.files&&input.files[0];if(!f)return;
+  const dest=joinPath(curFiles,f.name);toast("上传中… "+f.name);
   try{
     const r=await fetch("/portal/api/openlist/files/upload?path="+encodeURIComponent(dest),{method:"POST",body:f,headers:{"Content-Type":"application/octet-stream"}});
     if(!r.ok)throw new Error("HTTP "+r.status);
-    toast("上传完成");loadFiles(cur);
+    toast("上传完成");loadFiles(curFiles);
   }catch(e){toast("上传失败："+e.message);}
   input.value="";
 }
-function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1800);}
-function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
-if(typeof ddnas==="undefined"){window.ddnas={playMedia:u=>alert("原生桥不可用，播放:\n"+u),startBackup:()=>alert("原生桥不可用，备份需 App 内启动")};}
+
+/* ========= 启动：按 URL ?tab= 或默认 home ========= */
 (function(){
-  const q=new URLSearchParams(location.search);const t=q.get("tab");showTab(t==="files"?"files":"dev");
+  const q=new URLSearchParams(location.search);const t=q.get("tab");
+  setTab(t==="files"?"files":t==="me"?"me":"home");
 })();
 </script>
 </body></html>`
@@ -153,6 +657,8 @@ if(typeof ddnas==="undefined"){window.ddnas={playMedia:u=>alert("原生桥不可
 var portalTmpl = template.Must(template.New("portal").Parse(portalSrc))
 
 // servePortal 渲染 App 套壳加载的 /portal 页面；未登录跳转到 /admin/login。
+// 内嵌 SPA 仅通过同源 /portal/api/* 访问数据，真实的内网地址（node_exporter:9100 / AList:5244 等）
+// 只写入 Go 配置并在 adapter handler 内以容器 HTTP Client 调用，客户端永不触及内网。
 func (s *Server) servePortal(w http.ResponseWriter, r *http.Request) {
 	if !s.admin.LoggedIn(r) {
 		http.Redirect(w, r, "/admin/login", http.StatusFound)
@@ -163,5 +669,8 @@ func (s *Server) servePortal(w http.ResponseWriter, r *http.Request) {
 		host = "localhost"
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = portalTmpl.Execute(w, map[string]string{"Host": host})
+	_ = portalTmpl.Execute(w, map[string]string{
+		"Host":  host,
+		"Build": "20260903",
+	})
 }

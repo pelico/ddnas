@@ -59,6 +59,9 @@ func (s *Server) Reload() {
 	mux.HandleFunc("GET /portal/api/health", s.admin.AuthedAPI(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}))
+	// /portal/api/adapters_discovery：/api/adapters 的 cookie 会话镜像，
+	// 供前端 SPA 画 12 宫格时判断哪些功能已启用（files / backup / download ...）。
+	mux.HandleFunc("GET /portal/api/adapters_discovery", s.admin.AuthedAPI(s.handleAdapters))
 
 	// 挂载各启用适配器：同时以 Bearer（/api/*，供外部程序化访问）与
 	// cookie 会话（/portal/api/*，供 WebView 同源 fetch 与原生 ExoPlayer 注入 cookie）两种鉴权镜像挂载。
