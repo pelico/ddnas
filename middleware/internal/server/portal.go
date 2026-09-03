@@ -72,10 +72,10 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* ===== NAS 卡片（参考极空间：头像 / 设备名 / 存储用量条 / 设备图） ===== */
 .nas-card{
   background:linear-gradient(135deg,#3478f6 0%,#5a93ff 100%);
-  color:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(52,120,246,.22);
+  color:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;
 }
 @media (prefers-color-scheme: dark){
-  .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%);box-shadow:none}
+  .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
 }
 .nas-card::after{
   content:"";position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08);
@@ -93,7 +93,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .usage-bar{height:8px;background:rgba(255,255,255,.22);border-radius:999px;overflow:hidden}
 .usage-bar>i{display:block;height:100%;background:#fff;width:0;transition:width .5s}
 .usage-meta{display:flex;justify-content:space-between;margin-top:6px;font-size:12px;opacity:.92}
-.device-art{font-size:42px;filter:drop-shadow(0 4px 6px rgba(0,0,0,.18));line-height:1}
+.device-art{font-size:42px;line-height:1}
 
 /* ===== 功能宫格：4 列 × 3 行 圆角图标 + 文字 ===== */
 .grid{
@@ -258,13 +258,12 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       <div class="nas-title">
         <div class="txt">
           <span class="mod" id="d-model">DDNAS</span><span class="tag" id="d-net">内网</span>
-          <div style="height:10px"></div>
+          <div style="height:6px"></div>
           <div style="font-size:12px;opacity:.85" id="d-desc">家庭私有云 · 中间件 v1</div>
         </div>
-        <div style="text-align:right">
-          <div class="device-art">🖴</div>
-          <div style="font-size:11px;margin-top:2px;opacity:.9;min-height:30px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="d-stat">初始化中…</div>
-          <button id="d-refresh" style="font-size:11px;color:#fff;opacity:.9;background:rgba(255,255,255,.18);border-radius:999px;padding:2px 8px;margin-top:6px;display:none" onclick="forceRefreshSystem()">↻ 立即刷新</button>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span style="font-size:11px;opacity:.85;min-height:16px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" id="d-stat">初始化中…</span>
+          <button id="d-refresh" style="font-size:13px;color:#fff;opacity:.85;background:rgba(255,255,255,.18);border-radius:999px;width:26px;height:26px;display:none;align-items:center;justify-content:center" onclick="forceRefreshSystem()">↻</button>
         </div>
       </div>
       <div class="nas-usage">

@@ -9,12 +9,15 @@ import (
 const layoutSrc = `{{define "layout"}}<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{{.Title}} - DDNAS</title>
 <style>
 :root{--bg:#0f1115;--card:#1a1d24;--fg:#e6e6e6;--muted:#8a8f99;--accent:#4f9cff;--ok:#3ecf8e;--warn:#f5a623;--bd:#2a2e37}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom);
+}
 a{color:var(--accent);text-decoration:none}
 .wrap{max-width:760px;margin:0 auto;padding:24px 16px 80px}
 header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--bd);background:var(--card)}
