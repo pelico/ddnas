@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon 背景：品牌蓝渐变，与 portal 首页 NAS 卡片渐变色一致，视觉呼应。
+     Adaptive-icon 的 background 层是 108x108dp 的完整方形，被系统按 mask 裁切为圆形/圆角方形；
+     因此渐变铺满整个画布即可，不必做形状裁切。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- AList Gradient Shapes 默认不支持 vector；Android 12+ <gradient> 在 vector <path> 内
+         通过 fillColor + ColorStateList 很麻烦，这里用色块拼出径向渐变感，
+         左上角浅蓝到右下深蓝，保持所有系统版本兼容性。 -->
     <path
-        android:fillColor="@color/ddnas_dark_bg"
+        android:fillColor="#FF3478F6"
         android:pathData="M0,0h108v108h-108z" />
+    <!-- 左上高亮光晕，避免整块死色 -->
+    <path
+        android:fillColor="#CC6AA4FF"
+        android:pathData="M0,0h70v60h-70z" />
+    <path
+        android:fillColor="#88A5C9FF"
+        android:pathData="M0,0h42v40h-42z" />
 </vector>
