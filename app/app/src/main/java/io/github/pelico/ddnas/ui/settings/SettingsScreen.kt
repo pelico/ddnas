@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,8 +39,9 @@ fun SettingsScreen(
     contentPadding: PaddingValues,
     viewModel: SettingsViewModel = viewModel()
 ) {
-    val serverUrl by viewModel.serverUrl.collectAsStateWithLifecycle()
-    val appToken by viewModel.appToken.collectAsStateWithLifecycle()
+    val url by viewModel.url.collectAsStateWithLifecycle()
+    val token by viewModel.token.collectAsStateWithLifecycle()
+    val saved by viewModel.saved.collectAsStateWithLifecycle()
     val testState by viewModel.testState.collectAsStateWithLifecycle()
 
     Scaffold(
@@ -60,8 +62,8 @@ fun SettingsScreen(
             Text("服务器连接", style = MaterialTheme.typography.titleMedium)
 
             OutlinedTextField(
-                value = serverUrl,
-                onValueChange = viewModel::setServerUrl,
+                value = url,
+                onValueChange = viewModel::setUrl,
                 label = { Text("服务器地址") },
                 placeholder = { Text("http://192.168.1.10:8080") },
                 singleLine = true,
@@ -69,8 +71,8 @@ fun SettingsScreen(
             )
 
             OutlinedTextField(
-                value = appToken,
-                onValueChange = viewModel::setAppToken,
+                value = token,
+                onValueChange = viewModel::setToken,
                 label = { Text("App 令牌") },
                 placeholder = { Text("Bearer token") },
                 singleLine = true,
@@ -83,6 +85,12 @@ fun SettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Button(
+                    onClick = viewModel::save,
+                    enabled = !saved
+                ) {
+                    Text(if (saved) "已保存" else "保存")
+                }
                 OutlinedButton(onClick = viewModel::testConnection) {
                     Text("测试连接")
                 }
@@ -102,7 +110,7 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                "令牌通过 DataStore 本地持久化，并以 Bearer 头附加到所有请求。",
+                "保存后令牌通过 DataStore 本地持久化，并以 Bearer 头附加到所有请求。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
