@@ -44,6 +44,11 @@ class BackupService : Service() {
         if (treeUri == null || origin == null) {
             _progress.value = Progress.Error("缺少备份参数"); stopSelf(); return START_NOT_STICKY
         }
+        // 防止重复启动：若已有备份在跑，拒绝新任务。
+        // 正常流程下前端按钮在运行期间会切换为"取消备份"，此处仅作并发兜底。
+        if (running) return START_NOT_STICKY
+        running = true
+        cancelled = false
         val cookie = intent.getStringExtra(EXTRA_COOKIE) ?: ""
         val remoteBase = intent.getStringExtra(EXTRA_REMOTE_BASE) ?: "/手机备份"
 
@@ -96,6 +101,11 @@ class BackupService : Service() {
             var done = 0
             var failed = 0
             for ((file, rel) in toUpload) {
+                // 用户点"取消备份"后，等当前文件传完即退出循环
+                if (cancelled) {
+                    _progress.value = Progress.Done("已取消（已传 $done 个文件）")
+                    return
+                }
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
                 val ok = try {
                     uploadFile(origin, cookie, dest, file)
@@ -120,6 +130,8 @@ class BackupService : Service() {
         } catch (e: Exception) {
             _progress.value = Progress.Error(e.message ?: "备份失败")
         } finally {
+            running = false
+            cancelled = false
             stopSelf()
         }
     }
@@ -180,12 +192,25 @@ class BackupService : Service() {
         android.util.Log.w("DDNAS-Backup", msg, e)
     }
 
+    /** JSON 字符串转义：处理 \ " 和换行。 */
+    private fun jsonStr(s: String): String =
+        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+
     sealed interface Progress {
         data object Idle : Progress
-        data object Scanning : Progress
+        data class Scanning : Progress
         data class Running(val done: Int, val total: Int, val current: String) : Progress
         data class Done(val message: String) : Progress
         data class Error(val message: String) : Progress
+
+        /** 序列化为 portal 端 __onBackupProgress(p) 可解析的 JSON 字符串。 */
+        fun toJson(): String = when (this) {
+            is Idle -> """{"phase":"idle"}"""
+            is Scanning -> """{"phase":"scanning"}"""
+            is Running -> """{"phase":"running","done":$done,"total":$total,"current":""" + jsonStr(current) + """}"""
+            is Done -> """{"phase":"done","message":""" + jsonStr(message) + """}"""
+            is Error -> """{"phase":"error","message":""" + jsonStr(message) + """}"""
+        }
     }
 
     companion object {
@@ -196,6 +221,12 @@ class BackupService : Service() {
         private const val NOTIF_ID = 4242
         private val _progress = MutableStateFlow<Progress>(Progress.Idle)
         val progress: StateFlow<Progress> = _progress
-        fun reset() { _progress.value = Progress.Idle }
+
+        // 运行中标志：onStartCommand 拒绝重复启动，startBackupService 前置检查
+        @Volatile private var running = false
+        // 取消标志：用户点"取消备份"后置 true，runBackup 循环检测后退出
+        @Volatile private var cancelled = false
+        fun isRunning(): Boolean = running
+        fun cancel() { cancelled = true }
     }
 }

@@ -1,0 +1,24 @@
+# Android / Gradle 构建缓存
+app/.gradle/
+.gradle/
+build/
+!middleware/**/build/
+app/build/
+!**/build.gradle.kts
+!**/build.gradle
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# Go
+middleware/bin/
+*.exe
+*.test
+*.out

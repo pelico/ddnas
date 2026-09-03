@@ -223,6 +223,35 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-btn:active{opacity:.6}
 .bk-row.warn .bk-v{color:var(--warn)}
 
+/* 备份进度条（内嵌面板，不弹窗） */
+.bk-progress{margin-top:10px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid var(--bd)}
+.bk-prog-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:6px}
+.bk-prog-label{color:var(--fg);font-weight:600}
+.bk-prog-right{display:flex;align-items:center;gap:8px}
+.bk-prog-count{color:var(--accent);font-variant-numeric:tabular-nums}
+.bk-prog-cancel{font-size:11px;color:var(--err);padding:2px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--chip)}
+.bk-prog-cancel:active{opacity:.6}
+.bk-prog-bar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden}
+.bk-prog-fill{height:100%;background:var(--accent);transition:width .3s ease;border-radius:3px}
+.bk-prog-cur{font-size:11px;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-prog-cur.err{color:var(--err)}
+.bk-prog-cur.ok{color:var(--ok)}
+
+/* 远程目录浏览弹层 */
+.bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column}
+.bk-browse-card{background:var(--card);margin:auto 16px;border-radius:14px;max-height:70vh;display:flex;flex-direction:column;overflow:hidden}
+.bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd)}
+.bk-browse-title{font-size:14px;font-weight:600;flex:1}
+.bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd);word-break:break-all}
+.bk-browse-list{flex:1;overflow:auto;padding:4px 0}
+.bk-browse-item{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
+.bk-browse-item:active{background:var(--surface2)}
+.bk-browse-item .ic{font-size:16px;opacity:.8}
+.bk-browse-item .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-browse-empty{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+.bk-browse-foot{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--bd)}
+.bk-browse-foot .bk-btn{flex:1;padding:9px 0;text-align:center;font-size:13px;font-weight:600}
+
 /* ===== 底部三栏导航 ===== */
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
@@ -309,9 +338,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     </div>
 
     <div class="section" id="bk-section">
-      <div class="sitem big" onclick="ddnas.startBackup()">
+      <div class="sitem big" id="bk-quick" onclick="onQuickBackup()">
         <span class="ic">💾</span>
-        <div class="lbl">立即备份<div class="desc" id="bk-quick-desc">递归上传选中目录到中间件</div></div>
+        <div class="lbl"><span id="bk-quick-label">立即备份</span><div class="desc" id="bk-quick-desc">递归上传选中目录到中间件</div></div>
         <span class="arr">›</span>
       </div>
       <div class="bk-panel">
@@ -324,11 +353,23 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           <div class="bk-k">远程路径</div>
           <input class="bk-input" id="bk-remote" type="text" placeholder="/手机备份/" />
           <button class="bk-btn" id="bk-save-remote" onclick="saveRemoteBase()">保存</button>
+          <button class="bk-btn" onclick="browseRemoteDir()">浏览</button>
         </div>
         <div class="bk-row">
           <div class="bk-k">上次备份</div>
           <div class="bk-v" id="bk-last">—</div>
           <button class="bk-btn" id="bk-refresh-cfg" onclick="loadBackupConfig()">刷新</button>
+        </div>
+        <div class="bk-progress" id="bk-progress" style="display:none">
+          <div class="bk-prog-head">
+            <span class="bk-prog-label" id="bk-prog-label">备份中</span>
+            <div class="bk-prog-right">
+              <span class="bk-prog-count" id="bk-prog-count">0/0</span>
+              <button class="bk-prog-cancel" id="bk-prog-cancel" onclick="ddnas.cancelBackup()">取消</button>
+            </div>
+          </div>
+          <div class="bk-prog-bar"><div class="bk-prog-fill" id="bk-prog-fill" style="width:0%"></div></div>
+          <div class="bk-prog-cur" id="bk-prog-cur">—</div>
         </div>
       </div>
     </div>
@@ -373,6 +414,22 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 <div id="toast" class="toast"></div>
 
+<!-- 远程目录浏览模态窗（备份模块内嵌，非 AlertDialog） -->
+<div class="bk-browse" id="bk-browse" style="display:none">
+  <div class="bk-browse-card">
+    <div class="bk-browse-head">
+      <button class="bk-btn" onclick="browseUp()">上级</button>
+      <div class="bk-browse-title">选择远程目录</div>
+      <button class="bk-btn" onclick="closeBrowse()">取消</button>
+    </div>
+    <div class="bk-browse-path" id="bk-browse-path">/</div>
+    <div class="bk-browse-list" id="bk-browse-list"></div>
+    <div class="bk-browse-foot">
+      <button class="bk-btn" onclick="browsePick()">选择此目录</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ========= 全局 401 拦截：session 失效自动跳登录页 ========= */
 // 容器重装 / 密码变更后旧 session 失效，/portal/api/* 返回 401。
@@ -416,7 +473,8 @@ function mediaExt(name){const ext=(String(name||"").split(".").pop()||"").toLowe
 // 仅给 startBackup 一个提示。App 环境下 ddnas 已由 addJavascriptInterface 注入，不进这分支。
 if(typeof ddnas==="undefined"){
   window.ddnas={
-    startBackup(){toast("备份功能请在 App 内使用。");}
+    startBackup(){toast("备份功能请在 App 内使用。");return "started";},
+    cancelBackup(){toast("备份功能请在 App 内使用。");}
   };
 }else{
   // App WebView 环境：系统导航栏/手势条遮挡更多，增大底部留白确保内容可拉到底
@@ -442,7 +500,7 @@ function setTab(t){
 // 只保留已实现的核心功能，后续扩展再加回
 const FEATURES=[
   {id:"cloud",label:"云盘",icon:"📁",cls:"c1",cap:"files",on(){setTab("files");}},
-  {id:"backup",label:"手机备份",icon:"💾",cls:"c6",cap:"backup",on(){ddnas.startBackup();}},
+  {id:"backup",label:"手机备份",icon:"💾",cls:"c6",cap:"backup",on(){onQuickBackup();}},
 ];
 let caps=new Set();
 function renderGrid(){
@@ -609,6 +667,136 @@ function saveRemoteBase(){
     toast("已保存远程路径："+base,1500);
     loadBackupConfig();
   }catch(e){toast("保存失败："+e.message);}
+}
+
+/* ========= 备份按钮状态切换 + 进度接收（原生推送 __onBackupProgress） ========= */
+// bkPhase 镜像原生 BackupService.Progress 状态：idle/scanning/running/done/error。
+// 主按钮"立即备份"在运行期间切换为"取消备份"，避免重复点击触发并发备份；
+// 进度区内嵌取消按钮，运行期间可见。
+var bkPhase="idle";
+function onQuickBackup(){
+  if(typeof ddnas==="undefined"||!ddnas.startBackup)return;
+  // 进行中：转为取消
+  if(bkPhase==="running"||bkPhase==="scanning"){
+    if(ddnas.cancelBackup){ddnas.cancelBackup();toast("正在取消当前备份…");}
+    return;
+  }
+  // 原生侧 isRunning 拦截 race，返回 "running" 时给提示
+  const r=ddnas.startBackup();
+  if(r==="running")toast("备份进行中，请先取消或等待完成");
+}
+// 由 MainActivity evaluateJavascript 推送：__onBackupProgress(<Progress JSON 对象>)
+window.__onBackupProgress=function(p){
+  if(p==null)return;
+  if(typeof p==="string"){try{p=JSON.parse(p);}catch(e){return;}}
+  bkPhase=p.phase||"idle";
+  const box=document.getElementById("bk-progress");
+  const labelEl=document.getElementById("bk-prog-label");
+  const countEl=document.getElementById("bk-prog-count");
+  const fillEl=document.getElementById("bk-prog-fill");
+  const curEl=document.getElementById("bk-prog-cur");
+  const quickLabel=document.getElementById("bk-quick-label");
+  const cancelBtn=document.getElementById("bk-prog-cancel");
+  const running=bkPhase==="running"||bkPhase==="scanning";
+  // 主按钮文案切换（进行中→"取消备份"）
+  if(quickLabel)quickLabel.textContent=running?"取消备份":"立即备份";
+  // 取消按钮显隐
+  if(cancelBtn)cancelBtn.style.display=running?"inline-block":"none";
+  // 进度区显隐：idle 隐藏，其余显示
+  if(box)box.style.display=(bkPhase==="idle")?"none":"block";
+  if(labelEl){
+    labelEl.textContent=bkPhase==="scanning"?"扫描中…"
+      :bkPhase==="running"?"备份中"
+      :bkPhase==="done"?"完成"
+      :bkPhase==="error"?"出错":"";
+  }
+  if(bkPhase==="running"){
+    const total=+p.total||0,done=+p.done||0;
+    if(countEl)countEl.textContent=done+"/"+total;
+    if(fillEl)fillEl.style.width=(total>0?Math.round(done/total*100):0)+"%";
+    if(curEl){curEl.textContent=p.current||"—";curEl.className="bk-prog-cur";}
+  }else if(bkPhase==="scanning"){
+    if(countEl)countEl.textContent="";
+    if(fillEl)fillEl.style.width="100%";
+    if(curEl){curEl.textContent="正在扫描目录…";curEl.className="bk-prog-cur";}
+  }else if(bkPhase==="done"){
+    if(countEl)countEl.textContent="";
+    if(fillEl)fillEl.style.width="100%";
+    if(curEl){curEl.textContent=p.message||"完成";curEl.className="bk-prog-cur ok";}
+  }else if(bkPhase==="error"){
+    if(countEl)countEl.textContent="";
+    if(fillEl)fillEl.style.width="0%";
+    if(curEl){curEl.textContent=p.message||"出错";curEl.className="bk-prog-cur err";}
+  }
+};
+
+/* ========= 远程目录浏览（复用 /portal/api/openlist/files/list） ========= */
+// 备份模块内嵌的目录选择器：点击"浏览"按钮弹出模态窗，
+// 在 OpenList/AList 远端目录树中导航并选定远程备份根路径。
+// 设计目标：用户能直观看到"备份到 OpenList 的哪个文件夹下"。
+var browseCur="";       // 当前浏览的远程路径（相对，如 "手机备份/照片"）
+function browseRemoteDir(){
+  const root=document.getElementById("bk-browse");
+  const listEl=document.getElementById("bk-browse-list");
+  if(!root||!listEl)return;
+  // 初始路径：取当前远程路径输入框的值，去掉首尾 "/"
+  const remoteEl=document.getElementById("bk-remote");
+  let init="";
+  if(remoteEl){init=remoteEl.value.trim().replace(/^\/+/,"").replace(/\/+$/,"");}
+  root.style.display="flex";
+  browseLoad(init);
+}
+function closeBrowse(){
+  const root=document.getElementById("bk-browse");
+  if(root)root.style.display="none";
+}
+function browseLoad(p){
+  browseCur=p||"";
+  const pathEl=document.getElementById("bk-browse-path");
+  const listEl=document.getElementById("bk-browse-list");
+  if(!pathEl||!listEl)return;
+  pathEl.textContent="/"+browseCur;
+  listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
+  fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(browseCur)).then(r=>{
+    if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
+  }).then(resp=>{
+    const items=(resp.items||[]).filter(it=>{
+      const isDir=!!(it.is_dir||it.type==="folder");
+      return isDir;  // 仅展示目录，文件不参与路径选择
+    }).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""));
+    if(!items.length){
+      listEl.innerHTML='<div class="bk-browse-empty">空目录</div>';
+      return;
+    }
+    listEl.innerHTML=items.map(it=>{
+      const name=esc(it.name||"");
+      const rel=joinPath(browseCur,it.name||"");
+      return '<div class="bk-browse-item" data-rel="'+esc(rel)+'">'+
+        '<span class="ic">📂</span><span class="nm">'+name+'</span><span class="arr">›</span></div>';
+    }).join("");
+    listEl.querySelectorAll(".bk-browse-item").forEach(el=>{
+      el.addEventListener("click",()=>browseLoad(el.dataset.rel||""));
+    });
+  }).catch(e=>{
+    listEl.innerHTML='<div class="bk-browse-empty">加载失败：'+esc(e.message)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
+  });
+}
+function browseUp(){
+  if(!browseCur)return;
+  const i=browseCur.lastIndexOf("/");
+  browseLoad(i<0?"":browseCur.slice(0,i));
+}
+function browsePick(){
+  const remoteEl=document.getElementById("bk-remote");
+  if(!remoteEl){closeBrowse();return;}
+  // 规范：以 / 开头，以 / 结尾
+  let base="/"+browseCur;
+  if(base.charAt(base.length-1)!=="/")base=base+"/";
+  remoteEl.value=base;
+  remoteEl.dataset.touched="1";
+  closeBrowse();
+  // 直接保存，避免用户还要手动点"保存"
+  saveRemoteBase();
 }
 function monitorEmpty(title,reason){
   // 占位监控卡：左侧灰色空环，右侧展示"—"；保持 2x2 网格稳定，不会从"4 卡"忽然变"1 条错误"页面跳动

@@ -134,16 +134,17 @@ class MainActivity : ComponentActivity() {
                     ServerManager(fullScreen = active == null, onClose = { showManager = false })
                 }
                 if (active != null && !showManager) {
-                    PortalWebView(server = active)
+                    PortalWebView(server = active, backupProgress = backup)
                 }
             }
-            BackupProgressDialog(backup)
         }
     }
 
-    /** 加载 /portal 的 WebView，注入 ddnas 桥。按服务器 url+name 为 key 重建以切换。 */
+    /** 加载 /portal 的 WebView，注入 ddnas 桥。按服务器 url+name 为 key 重建以切换。
+     *  backupProgress 由 BackupService 推送，通过 evaluateJavascript 注入 portal，
+     *  让备份进度内嵌在备份面板里显示，不再弹 AlertDialog。 */
     @Composable
-    private fun PortalWebView(server: Server) {
+    private fun PortalWebView(server: Server, backupProgress: BackupService.Progress) {
         // 切换服务器时整体重建 WebView，避免复用上一个会话的 cookie/JS 状态。
         key(server.url + server.name) {
             AndroidView(
@@ -177,6 +178,15 @@ class MainActivity : ComponentActivity() {
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
                         loadUrl(server.url.trimEnd('/') + "/portal")
+                    }
+                },
+                update = { wv ->
+                    // BackupService 进度变化时，推送到 portal 备份面板内嵌显示。
+                    // Idle 不推送（避免覆盖面板默认状态）。
+                    if (backupProgress !is BackupService.Progress.Idle) {
+                        val js = "window.__onBackupProgress&&__onBackupProgress(" +
+                            backupProgress.toJson() + ")"
+                        wv.evaluateJavascript(js, null)
                     }
                 }
             )
@@ -273,23 +283,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Composable
-    private fun BackupProgressDialog(progress: BackupService.Progress) {
-        val msg = when (progress) {
-            is BackupService.Progress.Running -> "备份中：${progress.done}/${progress.total}\n${progress.current}"
-            is BackupService.Progress.Done -> progress.message
-            is BackupService.Progress.Error -> "备份出错：${progress.message}"
-            BackupService.Progress.Scanning -> "扫描文件中…"
-            BackupService.Progress.Idle -> return
-        }
-        AlertDialog(
-            onDismissRequest = { BackupService.reset() },
-            confirmButton = { TextButton(onClick = { BackupService.reset() }) { Text("关闭") } },
-            title = { Text("备份") },
-            text = { Text(msg) }
-        )
-    }
-
     // --- JS 桥 ---
 
     /** 暴露给 /portal 页面的原生桥：ddnas.playMedia(url) / ddnas.startBackup()。 */
@@ -299,8 +292,11 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { startPlayer(url) }
         }
 
+        /** 立即备份入口。返回状态字符串供前端提示：
+         *  "running" 已有备份在跑；"started" 已发起（含权限申请中/选目录中）；"noDir" 无目录已弹选择器。 */
         @JavascriptInterface
-        fun startBackup() {
+        fun startBackup(): String {
+            if (BackupService.isRunning()) return "running"
             runOnUiThread {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -318,6 +314,13 @@ class MainActivity : ComponentActivity() {
                     treePicker.launch(null)
                 }
             }
+            return "started"
+        }
+
+        /** 取消正在进行的备份。runBackup 在当前文件传完后退出循环。 */
+        @JavascriptInterface
+        fun cancelBackup() {
+            BackupService.cancel()
         }
 
         /** 选择本地备份源目录（SAF）。选择后持久化 treeUri，下次直接复用。 */
@@ -472,11 +475,12 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) { uriStr }
     }
 
-    /** 启动备份前台服务，传入 treeUri/远程路径/cookie。 */
+    /** 启动备份前台服务，传入 treeUri/远程路径/cookie。
+     *  若已有备份在跑则不重复启动（前端按钮已切换为"取消"，此处兜底防并发）。 */
     private fun startBackupService(treeUriStr: String, remoteBase: String) {
+        if (BackupService.isRunning()) return
         val active = currentServer() ?: return
         val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
-        BackupService.reset()
         androidx.core.content.ContextCompat.startForegroundService(
             this,
             Intent(this, BackupService::class.java).apply {
