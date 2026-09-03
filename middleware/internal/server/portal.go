@@ -47,7 +47,8 @@ const portalSrc = `<!doctype html>
 html,body{margin:0;height:100%}
 body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);overscroll-behavior:none;font-size:14px;line-height:1.5;
   padding-top:calc(env(safe-area-inset-top) + 4px);
-  padding-bottom:calc(env(safe-area-inset-bottom) + 88px);
+  /* App WebView 不传 env(safe-area-inset-bottom)，用固定大值覆盖 tabbar(56px)+系统导航栏(48px)+余量 */
+  padding-bottom:calc(env(safe-area-inset-bottom) + 112px);
 }
 a{color:var(--accent);text-decoration:none}
 button{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer}

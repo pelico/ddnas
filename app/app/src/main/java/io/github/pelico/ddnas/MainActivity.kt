@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -124,7 +125,8 @@ class MainActivity : ComponentActivity() {
         // 切换服务器时整体重建 WebView，避免复用上一个会话的 cookie/JS 状态。
         key(server.url + server.name) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                // 避开系统导航栏，防止 tabbar 被手势条/虚拟键遮挡，内容也能拉到底
+                modifier = Modifier.fillMaxSize().navigationBarsPadding(),
                 factory = { ctx ->
                     WebView(ctx).apply {
                         settings.javaScriptEnabled = true
