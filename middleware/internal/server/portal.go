@@ -689,7 +689,7 @@ function saveRemoteBase(){
   var saveBtn=document.getElementById("bk-save-remote");
   if(saveBtn)saveBtn.textContent="验证中…";
   // 验证远程路径：调用 mkdir 确保目录存在且可写，再保存到原生配置
-  fetch("/portal/api/openlist/files/mkdir?path="+encodeURIComponent(base),{method:"POST"})
+  fetch("/portal/api/files/mkdir?path="+encodeURIComponent(base),{method:"POST"})
     .then(r=>r.json())
     .then(resp=>{
       if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
@@ -812,7 +812,7 @@ window.__onNativeBack=function(){
   return "not_handled";
 };
 
-/* ========= 远程目录浏览（复用 /portal/api/openlist/files/list） ========= */
+/* ========= 远程目录浏览（复用能力路由 /portal/api/files/list） ========= */
 // 备份模块内嵌的目录选择器：点击"浏览"按钮弹出模态窗，
 // 在 OpenList/AList 远端目录树中导航并选定远程备份根路径。
 // 设计目标：用户能直观看到"备份到 OpenList 的哪个文件夹下"。
@@ -839,7 +839,7 @@ function browseLoad(p){
   if(!pathEl||!listEl)return;
   pathEl.textContent="/"+browseCur;
   listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
-  fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(browseCur)).then(r=>{
+  fetch("/portal/api/files/list?path="+encodeURIComponent(browseCur)).then(r=>{
     if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
   }).then(resp=>{
     const items=(resp.items||[]).filter(it=>{
@@ -991,7 +991,7 @@ function loadFiles(p){
   if(upBtn)upBtn.title="上传到当前目录: /"+(curFiles||"");
   renderCrumb(curFiles);
   body.innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
-  fetch("/portal/api/openlist/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
+  fetch("/portal/api/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
     if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
   }).then(resp=>{
     const items=(resp.items||[]).slice().sort((a,b)=>{
@@ -1073,7 +1073,7 @@ function renderCrumb(p){
 function play(relPath){
   if(!relPath)return;
   // 逐段 encodeURIComponent，保留 "/" 分隔，Go {path...} 会正确捕获多段
-  const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
+  const url=location.origin+"/portal/api/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
   const name=relPath.split("/").pop()||"播放";
   // App 原生桥可用时调 ExoPlayer（支持更多格式 + 硬解 + cookie 注入）
   if(typeof ddnas!=="undefined"&&typeof ddnas.playMedia==="function"){
@@ -1139,7 +1139,7 @@ function openVideoPlayer(url,title){
 function viewImage(relPath,name){
   if(!relPath)return;
   // 与 play 复用同一 stream 代理：浏览器 img 直接加载即可
-  const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
+  const url=location.origin+"/portal/api/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
   const dispName=name||(relPath.split("/").pop()||"图片");
   // App 原生桥：用 PhotoView 等打开，体验优于 WebView 内联预览
   if(typeof ddnas!=="undefined"&&typeof ddnas.viewImage==="function"){
@@ -1197,7 +1197,7 @@ function openImageOverlay(url,title){
 }
 function downloadFile(relPath,name){
   if(!relPath){toast("无效路径");return;}
-  const url=location.origin+"/portal/api/openlist/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
+  const url=location.origin+"/portal/api/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
   const dispName=name||(relPath.split("/").pop()||"文件");
   // App 原生桥：弹下载确认对话框，确认后写入 Download 目录
   if(typeof ddnas!=="undefined"&&typeof ddnas.downloadFile==="function"){
@@ -1220,7 +1220,7 @@ async function upload(input){
     const dest=joinPath(dir,f.name);
     toast("上传中 ("+(i+1)+"/"+total+") → "+dirDisp+"/"+f.name);
     try{
-      const r=await fetch("/portal/api/openlist/files/upload?path="+encodeURIComponent(dest),{method:"POST",body:f,headers:{"Content-Type":"application/octet-stream"}});
+      const r=await fetch("/portal/api/files/upload?path="+encodeURIComponent(dest),{method:"POST",body:f,headers:{"Content-Type":"application/octet-stream"}});
       if(!r.ok)throw new Error("HTTP "+r.status);
       ok++;
     }catch(e){fail++;console.error("上传失败 "+f.name,e);}

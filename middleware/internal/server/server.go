@@ -81,6 +81,32 @@ func (s *Server) Reload() {
 			mux.HandleFunc(rt.Method+" "+portal, s.admin.AuthedAPI(rt.Handler))
 		}
 	}
+	// 能力路由：将第一个声明 "files" 能力的 adapter 的 /files/* 路由
+	// 额外挂载为通用 /api/files/* 和 /portal/api/files/*，
+	// 使前端/App 只依赖能力名称，不耦合具体 adapter 名。
+	var filesAdapter plugin.Adapter
+	for _, a := range s.active {
+		for _, c := range a.Capabilities() {
+			if c == "files" {
+				filesAdapter = a
+				break
+			}
+		}
+		if filesAdapter != nil {
+			break
+		}
+	}
+	if filesAdapter != nil {
+		for _, rt := range filesAdapter.Routes() {
+			if !strings.HasPrefix(rt.Path, "/files") {
+				continue
+			}
+			genericBearer := "/api" + rt.Path // /api/files/list, /api/files/upload ...
+			mux.HandleFunc(rt.Method+" "+genericBearer, s.authed(rt.Handler, cfg.Auth.AppToken))
+			genericPortal := "/portal/api" + rt.Path // /portal/api/files/list ...
+			mux.HandleFunc(rt.Method+" "+genericPortal, s.admin.AuthedAPI(rt.Handler))
+		}
+	}
 	s.mux = mux
 }
 
@@ -158,10 +184,6 @@ func checkToken(r *http.Request, token string) bool {
 		if strings.HasPrefix(auth, "Bearer ") && strings.TrimSpace(auth[7:]) == token {
 			return true
 		}
-	}
-	// 兜底 query
-	if r.URL.Query().Get("token") == token {
-		return true
 	}
 	return false
 }
