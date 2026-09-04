@@ -353,6 +353,22 @@ func (a *Adapter) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	upBody, _ := io.ReadAll(resp.Body)
+	// 上游 HTTP 非 2xx 直接判失败（与 uploadFile 一致）
+	if resp.StatusCode >= 300 {
+		writeErr(w, http.StatusBadGateway, fmt.Sprintf("OpenList mkdir 失败(%d): %s", resp.StatusCode, string(upBody)))
+		return
+	}
+	// OpenList/AList 用 {"code":200,...} 表示业务结果，HTTP 恒 200；
+	// code 非 0 且非 200 视为业务失败（如无权限/路径非法），避免假阳性 ok:true
+	var aj struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(upBody, &aj) == nil && aj.Code != 0 && aj.Code != 200 {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": aj.Message, "code": aj.Code, "path": full})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": full})
 }
 

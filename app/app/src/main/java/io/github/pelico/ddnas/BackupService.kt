@@ -100,8 +100,9 @@ class BackupService : Service() {
             }
 
             // 备份前确保远程根目录存在且可写，避免所有文件静默失败
-            if (!mkdirRemote(origin, cookie, remoteBase)) {
-                _progress.value = Progress.Error("远程目录不可用：$remoteBase（请检查 OpenList 挂载配置）")
+            val mErr = mkdirRemote(origin, cookie, remoteBase)
+            if (mErr != null) {
+                _progress.value = Progress.Error(mErr)
                 return
             }
 
@@ -186,9 +187,8 @@ class BackupService : Service() {
             }
             val total = toUpload.size
             if (total == 0) { _progress.value = Progress.Done("无需备份"); return }
-            if (!mkdirRemote(origin, cookie, remoteBase)) {
-                _progress.value = Progress.Error("远程目录不可用：$remoteBase"); return
-            }
+            val mErr = mkdirRemote(origin, cookie, remoteBase)
+            if (mErr != null) { _progress.value = Progress.Error(mErr); return }
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0; var failed = 0
             for ((file, rel) in toUpload) {
@@ -247,26 +247,37 @@ class BackupService : Service() {
         }
     }
 
-    /** 调用中间件 mkdir 接口确保远程目录存在且可写。返回 false 表示不可用。 */
-    private fun mkdirRemote(origin: String, cookie: String, remoteBase: String): Boolean {
+    /** 调用中间件 mkdir 接口确保远程目录存在且可写。
+     *  返回 null 表示可用；返回非空字符串表示失败原因（带 HTTP code/上游错误，便于排查）。 */
+    private fun mkdirRemote(origin: String, cookie: String, remoteBase: String): String? {
         val base = remoteBase.trimEnd('/')
-        if (base.isEmpty()) return true  // 根目录跳过
+        if (base.isEmpty()) return null  // 根目录跳过
         val url = origin.trimEnd('/') + "/portal/api/openlist/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
         }.post(EMPTY_BODY).build()
         return try {
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log_w("mkdir fail: $base HTTP ${resp.code}", Exception("mkdir HTTP ${resp.code}"))
-                    return false
-                }
                 val body = resp.body?.string() ?: ""
-                body.contains("\"ok\":true") || body.contains("\"ok\": true")
+                if (!resp.isSuccessful) {
+                    // 401 = cookie 失效；其他 = 上游/路径问题
+                    val hint = if (resp.code == 401) "登录已失效，请重新打开页面后再备份"
+                               else "HTTP ${resp.code}"
+                    Log_w("mkdir fail: $base HTTP ${resp.code} body=${body.take(120)}", Exception("mkdir HTTP ${resp.code}"))
+                    "远程目录不可用：$base（$hint）"
+                } else if (!body.contains("\"ok\":true") && !body.contains("\"ok\": true")) {
+                    // 业务失败：上游返回 ok:false 或错误 JSON，尝试提取 error/message
+                    val msg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                        ?: body.take(80)
+                    Log_w("mkdir biz fail: $base body=${body.take(120)}", Exception("mkdir biz fail"))
+                    "远程目录不可用：$base（$msg）"
+                } else {
+                    null
+                }
             }
         } catch (e: Exception) {
             Log_w("mkdir exception: $base", e)
-            false
+            "远程目录不可用：$base（网络异常：${e.message}）"
         }
     }
 
