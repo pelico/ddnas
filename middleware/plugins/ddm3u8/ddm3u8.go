@@ -135,6 +135,10 @@ func (a *Adapter) proxyTo(upstreamPath string, w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusBadGateway, "构造上游请求失败: "+err.Error())
 		return
 	}
+	// 透传 Content-Length：form-data 必须带正确长度，否则 http client 用 chunked
+	// 传输，Flask request.form 解析失败，DDM3U8 收不到 url/sub_path 等字段，
+	// 报"URL不能为空"或无法创建临时目录
+	req.ContentLength = r.ContentLength
 	if a.user != "" || a.pass != "" {
 		req.SetBasicAuth(a.user, a.pass)
 	}
