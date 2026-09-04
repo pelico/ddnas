@@ -790,7 +790,7 @@ function browseLoad(p){
     const items=(resp.items||[]).filter(it=>{
       const isDir=!!(it.is_dir||it.type==="folder");
       return isDir;  // 仅展示目录，文件不参与路径选择
-    }).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""));
+    }).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
     if(!items.length){
       listEl.innerHTML='<div class="bk-browse-empty">空目录</div>';
       return;
