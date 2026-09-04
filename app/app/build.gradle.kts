@@ -28,16 +28,6 @@ android {
         }
     }
 
-    signingConfigs {
-        // 从环境变量读取签名信息，CI 注入；本地无环境变量时 storeFile 为 null，
-        // release 构建产出未签名 APK（仅 CI 需要签名，本地用 debug 即可）
-        create("release") {
-            storeFile = System.getenv("DDNAS_KEYSTORE_FILE")?.let { file(it) }
-            storePassword = System.getenv("DDNAS_KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("DDNAS_KEY_ALIAS") ?: ""
-            keyPassword = System.getenv("DDNAS_KEY_PASSWORD") ?: ""
-        }
-    }
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -45,7 +35,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
         }
     }
 

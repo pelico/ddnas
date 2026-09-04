@@ -860,20 +860,37 @@ function saveRemoteBase(){
   remoteEl.disabled=true;
   var saveBtn=document.getElementById("bk-save-remote");
   if(saveBtn)saveBtn.textContent="验证中…";
-  // 验证远程路径：调用 mkdir 确保目录存在且可写，再保存到原生配置
-  fetch("/portal/api/files/mkdir?path="+encodeURIComponent(base),{method:"POST"})
+  // 验证远程路径：先 mkdir 确保目录存在，再 upload 探针文件验证可写性。
+  // 仅 mkdir 不够——openlist 挂载只读存储时 mkdir 可能假成功，但真正写文件
+  // 才会暴露权限问题，避免"路径验证成功却备份不了"
+  fetch("/portal/api/files/mkdir?path="+encodeURIComponent(base),{method:"POST",credentials:"same-origin"})
     .then(r=>r.json())
     .then(resp=>{
-      if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
-      if(resp.ok){
-        if(typeof ddnas!=="undefined"&&ddnas.setRemoteBase){
-          try{ddnas.setRemoteBase(base);}catch(e){}
-        }
-        toast("路径验证成功："+base,1500);
-        loadBackupConfig();
-      }else{
+      if(!resp.ok){
+        if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
         toast("路径不可用："+(resp.error||resp.message||"创建目录失败，请检查 OpenList 挂载"),3000);
+        return;
       }
+      // mkdir 成功，再写探针验证可写性（探针小文件，下次覆盖，不残留多份）
+      if(saveBtn)saveBtn.textContent="验证可写…";
+      fetch("/portal/api/files/upload?path="+encodeURIComponent(base+".ddnas_probe"),{method:"POST",body:new Blob(["probe"]),credentials:"same-origin"})
+        .then(r2=>r2.json().catch(()=>({ok:r2.ok})))
+        .then(p2=>{
+          if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
+          if(p2.ok){
+            if(typeof ddnas!=="undefined"&&ddnas.setRemoteBase){
+              try{ddnas.setRemoteBase(base);}catch(e){}
+            }
+            toast("路径验证成功（可写）："+base,1500);
+            loadBackupConfig();
+          }else{
+            toast("目录已创建但不可写入："+(p2.error||p2.message||"请检查 OpenList 挂载是否只读"),3000);
+          }
+        })
+        .catch(e=>{
+          if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
+          toast("可写性验证失败："+e.message,3000);
+        });
     })
     .catch(e=>{
       if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
@@ -1112,8 +1129,8 @@ function browseLoad(p){
   if(!pathEl||!listEl)return;
   pathEl.textContent="/"+browseCur;
   listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
-  fetch("/portal/api/files/list?path="+encodeURIComponent(browseCur)).then(r=>{
-    if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
+  fetch("/portal/api/files/list?path="+encodeURIComponent(browseCur),{credentials:"same-origin"}).then(r=>{
+    if(!r.ok)throw new Error("HTTP "+r.status+(r.status===401?"（登录已失效，请重新打开页面）":""));return r.json();
   }).then(resp=>{
     const items=(resp.items||[]).filter(it=>{
       const isDir=!!(it.is_dir||it.type==="folder");
