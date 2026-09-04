@@ -97,6 +97,12 @@ class BackupService : Service() {
                 return
             }
 
+            // 备份前确保远程根目录存在且可写，避免所有文件静默失败
+            if (!mkdirRemote(origin, cookie, remoteBase)) {
+                _progress.value = Progress.Error("远程目录不可用：$remoteBase（请检查 OpenList 挂载配置）")
+                return
+            }
+
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0
             var failed = 0
@@ -126,7 +132,12 @@ class BackupService : Service() {
                 if (skipped > 0) append("，跳过 $skipped 个未变更")
                 if (failed > 0) append("，失败 $failed 个")
             }
-            _progress.value = Progress.Done(msg)
+            // 全部失败时报 Error，避免用户误以为备份成功
+            if (failed == total) {
+                _progress.value = Progress.Error("全部 $failed 个文件上传失败（请检查 OpenList 挂载与写入权限）")
+            } else {
+                _progress.value = Progress.Done(msg)
+            }
         } catch (e: Exception) {
             _progress.value = Progress.Error(e.message ?: "备份失败")
         } finally {
@@ -142,6 +153,29 @@ class BackupService : Service() {
             val rel = if (prefix.isEmpty()) name else "$prefix/$name"
             if (child.isDirectory) collect(child, rel, out)
             else if (child.isFile) out.add(child to rel)
+        }
+    }
+
+    /** 调用中间件 mkdir 接口确保远程目录存在且可写。返回 false 表示不可用。 */
+    private fun mkdirRemote(origin: String, cookie: String, remoteBase: String): Boolean {
+        val base = remoteBase.trimEnd('/')
+        if (base.isEmpty()) return true  // 根目录跳过
+        val url = origin.trimEnd('/') + "/portal/api/openlist/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
+        val req = Request.Builder().url(url).apply {
+            if (cookie.isNotEmpty()) header("Cookie", cookie)
+        }.post(EMPTY_BODY).build()
+        return try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log_w("mkdir fail: $base HTTP ${resp.code}", Exception("mkdir HTTP ${resp.code}"))
+                    return false
+                }
+                val body = resp.body?.string() ?: ""
+                body.contains("\"ok\":true") || body.contains("\"ok\": true")
+            }
+        } catch (e: Exception) {
+            Log_w("mkdir exception: $base", e)
+            false
         }
     }
 
@@ -220,6 +254,8 @@ class BackupService : Service() {
         const val EXTRA_COOKIE = "cookie"
         const val EXTRA_REMOTE_BASE = "remote_base"
         private const val NOTIF_ID = 4242
+        // mkdir 用的空 RequestBody（OkHttp POST 需要非空 body）
+        private val EMPTY_BODY = RequestBody.create(null, ByteArray(0))
         private val _progress = MutableStateFlow<Progress>(Progress.Idle)
         val progress: StateFlow<Progress> = _progress
 

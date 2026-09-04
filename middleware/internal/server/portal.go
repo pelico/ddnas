@@ -660,16 +660,31 @@ function saveRemoteBase(){
   remoteEl.dataset.touched="1";
   let base=remoteEl.value.trim();
   if(!base){toast("远程路径不能为空");return;}
-  // 规范：必须以 / 开头，以 / 结尾
   if(base.charAt(0)!=="/")base="/"+base;
   if(base.charAt(base.length-1)!=="/")base=base+"/";
-  if(typeof ddnas==="undefined"||!ddnas.setRemoteBase){toast("请在 App 内使用");return;}
-  try{
-    ddnas.setRemoteBase(base);
-    remoteEl.value=base;
-    toast("已保存远程路径："+base,1500);
-    loadBackupConfig();
-  }catch(e){toast("保存失败："+e.message);}
+  remoteEl.value=base;
+  remoteEl.disabled=true;
+  var saveBtn=document.getElementById("bk-save-remote");
+  if(saveBtn)saveBtn.textContent="验证中…";
+  // 验证远程路径：调用 mkdir 确保目录存在且可写，再保存到原生配置
+  fetch("/portal/api/openlist/files/mkdir?path="+encodeURIComponent(base),{method:"POST"})
+    .then(r=>r.json())
+    .then(resp=>{
+      if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
+      if(resp.ok){
+        if(typeof ddnas!=="undefined"&&ddnas.setRemoteBase){
+          try{ddnas.setRemoteBase(base);}catch(e){}
+        }
+        toast("路径验证成功："+base,1500);
+        loadBackupConfig();
+      }else{
+        toast("路径不可用："+(resp.error||resp.message||"创建目录失败，请检查 OpenList 挂载"),3000);
+      }
+    })
+    .catch(e=>{
+      if(saveBtn){saveBtn.textContent="保存";remoteEl.disabled=false;}
+      toast("验证失败："+e.message+"（请检查 OpenList 配置）",3000);
+    });
 }
 
 /* ========= 备份按钮状态切换 + 进度接收（原生推送 __onBackupProgress） ========= */
