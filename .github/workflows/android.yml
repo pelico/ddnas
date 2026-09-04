@@ -1,6 +1,8 @@
 name: build-android
 
-# 构建 DDNAS Android App（debug APK），打 tag 时发布到 Release。
+# 构建 DDNAS Android App（release 签名 APK），打 tag 时发布到 Release。
+# 签名密钥存 GitHub Secrets（不进仓库），CI 每次用同一 keystore 签名，
+# 签名一致即可直接覆盖升级安装，无需先卸载。
 # 不提交 gradle-wrapper.jar，CI 内由 setup-gradle 生成 wrapper 后构建。
 
 on:
@@ -34,18 +36,27 @@ jobs:
       - name: Generate gradle wrapper
         run: gradle wrapper --gradle-version 8.9 --distribution-type bin
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      # 解码 release keystore（二进制存为 base64 Secret，运行时还原到临时文件）
+      - name: Decode release keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/ddnas-release.keystore
+
+      - name: Build release APK
+        env:
+          DDNAS_KEYSTORE_FILE: ${{ runner.temp }}/ddnas-release.keystore
+          DDNAS_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          DDNAS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          DDNAS_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ddnas-app-debug-apk
-          path: app/app/build/outputs/apk/debug/*.apk
+          name: ddnas-app-release-apk
+          path: app/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Attach to GitHub Release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/app/build/outputs/apk/debug/*.apk
+          files: app/app/build/outputs/apk/release/*.apk
           generate_release_notes: true
