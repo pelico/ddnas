@@ -109,6 +109,8 @@ class BackupService : Service() {
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0
             var failed = 0
+            // 已创建的远程子目录缓存，避免每个文件都重复 mkdir 父目录
+            val mkdirCache = mutableSetOf<String>()
             for ((file, rel) in toUpload) {
                 // 用户点"取消备份"后，等当前文件传完即退出循环
                 if (cancelled) {
@@ -116,6 +118,21 @@ class BackupService : Service() {
                     return
                 }
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
+                // 确保父目录存在：OpenList upload 不自动创建嵌套目录。
+                // 备份遍历目录树生成 7WKYSSD/手机备份/DCIM/子目录/文件.jpg
+                // 这类嵌套路径，父目录不存在时上传全部失败（探针在根目录能写
+                // 是因为根目录已 mkdirRemote，但子目录没建）
+                val parent = dest.substringBeforeLast('/').trimEnd('/')
+                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/') && parent !in mkdirCache) {
+                    val pErr = mkdirRemote(origin, cookie, parent)
+                    mkdirCache.add(parent)  // 无论成败都缓存，避免同目录文件重复尝试
+                    if (pErr != null) {
+                        // 父目录创建失败，此文件直接记失败，不重试上传
+                        failed++; failedFiles.add(rel); done++
+                        _progress.value = Progress.Running(done, total, "目录创建失败: $parent")
+                        continue
+                    }
+                }
                 // 单文件最多重试 3 次，指数退避：1s → 2s → 4s
                 var ok = false
                 for (attempt in 0..2) {
@@ -191,9 +208,18 @@ class BackupService : Service() {
             if (mErr != null) { _progress.value = Progress.Error(mErr); return }
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0; var failed = 0
+            // 已创建的远程子目录缓存，避免每个文件都重复 mkdir 父目录
+            val mkdirCache = mutableSetOf<String>()
             for ((file, rel) in toUpload) {
                 if (cancelled) break
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
+                // 确保父目录存在（OpenList upload 不自动创建嵌套目录，详见 runBackup）
+                val parent = dest.substringBeforeLast('/').trimEnd('/')
+                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/') && parent !in mkdirCache) {
+                    val pErr = mkdirRemote(origin, cookie, parent)
+                    mkdirCache.add(parent)
+                    if (pErr != null) { failed++; done++; _progress.value = Progress.Running(done, total, "目录创建失败: $parent"); continue }
+                }
                 var ok = false
                 for (attempt in 0..2) {
                     if (cancelled) break
