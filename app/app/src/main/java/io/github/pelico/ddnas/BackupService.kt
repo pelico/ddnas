@@ -192,16 +192,17 @@ class BackupService : Service() {
         android.util.Log.w("DDNAS-Backup", msg, e)
     }
 
-    /** JSON 字符串转义：处理 \ " 和换行。 */
-    private fun jsonStr(s: String): String =
-        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
-
     sealed interface Progress {
         data object Idle : Progress
-        data class Scanning : Progress
+        data object Scanning : Progress
         data class Running(val done: Int, val total: Int, val current: String) : Progress
         data class Done(val message: String) : Progress
         data class Error(val message: String) : Progress
+
+        /** JSON 字符串转义：处理 \ " 和换行。
+         *  必须放在 sealed interface 内，否则成员 toJson() 无权访问 BackupService 类的私有方法。 */
+        private fun jsonStr(s: String): String =
+            "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
 
         /** 序列化为 portal 端 __onBackupProgress(p) 可解析的 JSON 字符串。 */
         fun toJson(): String = when (this) {

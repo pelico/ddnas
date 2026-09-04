@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Kotlin 编译用 JDK 21（jvmToolchain）：
+// Kotlin 1.9.24 嵌入的 JavaVersion.parse 无法解析 JDK 25 的三段版本号
+// （如 25.0.2），会在 CI/开发者本机 JDK 高于 21 时直接抛 IllegalArgumentException。
+// toolchain 让 Gradle 从本地已安装 JDK 中自动选 21 用于 kotlinc/javac，
+// 与 gradle daemon 本身跑的 JDK 解耦，避免版本解析崩溃。
+kotlin {
+    jvmToolchain(21)
+}
+
 android {
     namespace = "io.github.pelico.ddnas"
     compileSdk = 34
@@ -29,6 +38,10 @@ android {
         }
     }
 
+    // Kotlin/AGP 使用的 JDK 统一锁定 21：
+    // Kotlin 1.9 的 JavaVersion.parse 在 JDK 25（如 25.0.2 三段）上会抛
+    // IllegalArgumentException，导致 CI 环境 JDK 版本异常时直接编译失败。
+    // 锁定 toolchain 后自动从本机已安装 JDK 中选 21，与运行 gradle 的 JDK 解耦。
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
