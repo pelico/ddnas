@@ -109,8 +109,9 @@ class BackupService : Service() {
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0
             var failed = 0
-            // 已创建的远程子目录缓存，避免每个文件都重复 mkdir 父目录
-            val mkdirCache = mutableSetOf<String>()
+            // 已创建的远程子目录缓存：根目录已 mkdir 过，加入避免重复；
+            // ensureRemoteDirs 会把所有中间层也加进来，避免重复请求
+            val mkdirCache = mutableSetOf(remoteBase.trimEnd('/'))
             for ((file, rel) in toUpload) {
                 // 用户点"取消备份"后，等当前文件传完即退出循环
                 if (cancelled) {
@@ -118,18 +119,17 @@ class BackupService : Service() {
                     return
                 }
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                // 确保父目录存在：OpenList upload 不自动创建嵌套目录。
-                // 备份遍历目录树生成 7WKYSSD/手机备份/DCIM/子目录/文件.jpg
-                // 这类嵌套路径，父目录不存在时上传全部失败（探针在根目录能写
-                // 是因为根目录已 mkdirRemote，但子目录没建）
+                // 递归建父目录链：OpenList/AList mkdir 不递归建父目录，
+                // 父链中间层缺失会导致建子目录"假成功"或失败，从而所有上传失败。
+                // 例：/7WKYSSD/手机备份/DCIM/2024/IMG.jpg
+                //     会依次建 /7WKYSSD/手机备份/DCIM、/7WKYSSD/手机备份/DCIM/2024
                 val parent = dest.substringBeforeLast('/').trimEnd('/')
-                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/') && parent !in mkdirCache) {
-                    val pErr = mkdirRemote(origin, cookie, parent)
-                    mkdirCache.add(parent)  // 无论成败都缓存，避免同目录文件重复尝试
+                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
+                    val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
                     if (pErr != null) {
                         // 父目录创建失败，此文件直接记失败，不重试上传
                         failed++; failedFiles.add(rel); done++
-                        _progress.value = Progress.Running(done, total, "目录创建失败: $parent")
+                        _progress.value = Progress.Running(done, total, "目录创建失败: $pErr")
                         continue
                     }
                 }
@@ -208,17 +208,16 @@ class BackupService : Service() {
             if (mErr != null) { _progress.value = Progress.Error(mErr); return }
             _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
             var done = 0; var failed = 0
-            // 已创建的远程子目录缓存，避免每个文件都重复 mkdir 父目录
-            val mkdirCache = mutableSetOf<String>()
+            // 已创建的远程子目录缓存：根目录已 mkdir 过，加入避免重复
+            val mkdirCache = mutableSetOf(remoteBase.trimEnd('/'))
             for ((file, rel) in toUpload) {
                 if (cancelled) break
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                // 确保父目录存在（OpenList upload 不自动创建嵌套目录，详见 runBackup）
+                // 递归建父目录链，详见 runBackup
                 val parent = dest.substringBeforeLast('/').trimEnd('/')
-                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/') && parent !in mkdirCache) {
-                    val pErr = mkdirRemote(origin, cookie, parent)
-                    mkdirCache.add(parent)
-                    if (pErr != null) { failed++; done++; _progress.value = Progress.Running(done, total, "目录创建失败: $parent"); continue }
+                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
+                    val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
+                    if (pErr != null) { failed++; done++; _progress.value = Progress.Running(done, total, "目录创建失败: $pErr"); continue }
                 }
                 var ok = false
                 for (attempt in 0..2) {
@@ -305,6 +304,37 @@ class BackupService : Service() {
             Log_w("mkdir exception: $base", e)
             "远程目录不可用：$base（网络异常：${e.message}）"
         }
+    }
+
+    /** 递归创建远程目录链：从 remoteBase 下一层逐层 mkdir 到 fullParent。
+     *  OpenList/AList 的 /api/fs/mkdir 不递归建父目录，父目录不存在时建子目录
+     *  会"假成功"（上游返回 ok 但实际未建），导致后续上传全部失败。
+     *  已建层用 cache 跳过避免重复请求。
+     *  返回 null=全部成功；非空=失败原因（含失败的那一层路径）。 */
+    private fun ensureRemoteDirs(
+        origin: String, cookie: String, remoteBase: String,
+        fullParent: String, cache: MutableSet<String>
+    ): String? {
+        val base = remoteBase.trimEnd('/')
+        if (fullParent.isEmpty() || fullParent == base) return null  // fullParent 就是根，已建过
+        // fullParent 不在 base 之下：保险起见直接 mkdir fullParent
+        if (base.isNotEmpty() && !fullParent.startsWith(base + "/")) {
+            if (fullParent in cache) return null
+            cache.add(fullParent)
+            return mkdirRemote(origin, cookie, fullParent)?.let { "$fullParent：$it" }
+        }
+        // 取 fullParent 相对 base 的剩余部分，按 "/" 分段逐层 mkdir
+        val rest = if (base.isEmpty()) fullParent.trimStart('/') else fullParent.removePrefix(base + "/")
+        val parts = rest.split("/").filter { it.isNotEmpty() }
+        var cur = if (base.isEmpty()) "" else base
+        for (p in parts) {
+            cur = if (cur.isEmpty()) "/$p" else "$cur/$p"
+            if (cur in cache) continue
+            cache.add(cur)
+            val err = mkdirRemote(origin, cookie, cur)
+            if (err != null) return "$cur：$err"
+        }
+        return null
     }
 
     private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile): Boolean {
