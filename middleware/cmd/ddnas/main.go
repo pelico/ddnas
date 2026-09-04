@@ -13,6 +13,7 @@ import (
 	"github.com/pelico/ddnas/middleware/internal/config"
 	"github.com/pelico/ddnas/middleware/internal/server"
 	"github.com/pelico/ddnas/middleware/internal/plugin"
+	"github.com/pelico/ddnas/middleware/internal/store"
 	_ "github.com/pelico/ddnas/middleware/plugins/downloader"
 	_ "github.com/pelico/ddnas/middleware/plugins/nodeexporter"
 	_ "github.com/pelico/ddnas/middleware/plugins/openlist"
@@ -26,16 +27,23 @@ func main() {
 		log.Fatalf("创建数据目录 %s 失败: %v", dataDir, err)
 	}
 	cfgPath := filepath.Join(dataDir, "config.yaml")
-	store := config.New(cfgPath)
-	if err := store.Load(); err != nil && err != config.ErrNotFound {
+	cfgStore := config.New(cfgPath)
+	if err := cfgStore.Load(); err != nil && err != config.ErrNotFound {
 		log.Printf("加载配置失败(将使用空配置): %v", err)
 	}
 
+	// SQLite 持久层：备份历史、下载任务等运行时数据
+	db, err := store.New(dataDir)
+	if err != nil {
+		log.Fatalf("初始化数据库失败: %v", err)
+	}
+	defer db.Close()
+
 	adapters := plugin.Build()
-	srv := server.New(store, adapters)
+	srv := server.New(cfgStore, adapters, db)
 
 	log.Printf("DDNAS 中间件启动于 %s，数据目录 %s", addr, dataDir)
-	if !store.Configured() {
+	if !cfgStore.Configured() {
 		log.Printf("首次启动：请访问 http://<宿主>%s/ 完成设置向导", addr)
 	}
 

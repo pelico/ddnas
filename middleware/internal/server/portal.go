@@ -254,6 +254,26 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-prog-cur.err{color:var(--err)}
 .bk-prog-cur.ok{color:var(--ok)}
 
+/* 备份历史列表（最近 N 条，含失败文件展开） */
+.bk-history{margin-top:6px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid var(--bd)}
+.bk-hist-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:8px;color:var(--muted)}
+.bk-hist-refresh{font-size:11px;color:var(--accent);padding:2px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--chip)}
+.bk-hist-refresh:active{opacity:.6}
+.bk-hist-empty{padding:14px;text-align:center;color:var(--muted2);font-size:12px}
+.bk-hist-item{padding:8px 0;border-top:1px solid var(--bd);font-size:12px}
+.bk-hist-item:first-child{border-top:0}
+.bk-hist-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bk-hist-time{color:var(--fg);font-variant-numeric:tabular-nums;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-hist-badge{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.bk-hist-badge.ok{background:rgba(37,194,117,.12);color:var(--ok)}
+.bk-hist-badge.warn{background:rgba(245,166,35,.14);color:var(--warn)}
+.bk-hist-badge.err{background:rgba(239,91,91,.12);color:var(--err)}
+.bk-hist-stats{margin-top:4px;color:var(--muted);font-size:11px;display:flex;gap:10px;flex-wrap:wrap}
+.bk-hist-stats b{color:var(--fg);font-weight:600}
+.bk-hist-failed{margin-top:6px;padding:6px 8px;background:var(--card);border-radius:6px;border:1px dashed var(--bd);font-size:11px;color:var(--muted)}
+.bk-hist-failed .fl-head{color:var(--err);font-weight:600;margin-bottom:3px}
+.bk-hist-failed .fl-list{white-space:pre-wrap;word-break:break-all;line-height:1.5;max-height:120px;overflow:auto}
+
 /* 远程目录浏览弹层 */
 .bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column}
 .bk-browse-card{background:var(--card);margin:auto 16px;border-radius:14px;max-height:70vh;display:flex;flex-direction:column;overflow:hidden}
@@ -393,6 +413,14 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           <div class="bk-prog-bar"><div class="bk-prog-fill" id="bk-prog-fill" style="width:0%"></div></div>
           <div class="bk-prog-cur" id="bk-prog-cur">—</div>
         </div>
+        <!-- 备份历史：从 SQLite 拉取最近 10 条，含失败文件列表（可展开收起） -->
+        <div class="bk-history" id="bk-history">
+          <div class="bk-hist-head">
+            <span>备份历史</span>
+            <button class="bk-hist-refresh" id="bk-hist-refresh" onclick="loadBackupHistory()">刷新</button>
+          </div>
+          <div class="bk-hist-empty" id="bk-hist-empty">加载中…</div>
+        </div>
       </div>
     </div>
 
@@ -513,7 +541,7 @@ function setTab(t){
   });
   if(t==="home"&&!homeLoaded)loadHome();
   if(t==="files"&&!filesLoadedEver)loadFiles("");
-  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();}
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();loadBackupHistory();}
   // 滚动回到顶部
   window.scrollTo({top:0,behavior:"instant"});
 }
@@ -676,6 +704,69 @@ function loadBackupConfig(){
   const autoEl=document.getElementById("bk-auto");
   if(autoEl){autoEl.checked=!!cfg.autoBackup;}
 }
+/* ========= 备份历史（SQLite 持久化，由中间件 /portal/api/backup/history 提供） =========
+ * 备份完成后 App 调 POST 上报，前端拉取最近 10 条渲染。
+ * 失败文件列表默认收起，点击条目展开。设计目标：
+ *   - 用户能直观看到"最近几次备份成功吗？失败的是哪些文件？"
+ *   - 失败文件名按 "," 分隔换行展示，方便用户定位哪些照片/视频没传上去
+ */
+function loadBackupHistory(){
+  const listHost=document.getElementById("bk-history");
+  const emptyEl=document.getElementById("bk-hist-empty");
+  if(!listHost)return;  // 不在 me 页面
+  // 移除旧条目（保留 head + empty 占位）
+  listHost.querySelectorAll(".bk-hist-item").forEach(el=>el.remove());
+  if(emptyEl)emptyEl.textContent="加载中…";
+  fetch("/portal/api/backup/history?limit=10").then(r=>{
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    return r.json();
+  }).then(resp=>{
+    const records=resp.records||[];
+    if(!records.length){
+      if(emptyEl)emptyEl.textContent="暂无备份记录";
+      return;
+    }
+    if(emptyEl)emptyEl.style.display="none";
+    records.forEach(rec=>{
+      const item=document.createElement("div");
+      item.className="bk-hist-item";
+      // 状态徽章：failed>0 标 warn，全失败标 err，否则 ok
+      const total=+rec.total||0,failed=+rec.failed||0,success=+rec.success||0;
+      let badgeCls="ok",badgeTxt="成功";
+      if(failed>0&&failed<total){badgeCls="warn";badgeTxt="部分失败";}
+      else if(failed>0&&total>0&&failed>=total){badgeCls="err";badgeTxt="失败";}
+      else if(total===0){badgeCls="";badgeTxt="空"; }
+      const failedList=Array.isArray(rec.failed_list)?rec.failed_list:[];
+      const failedBlock=failedList.length
+        ? '<div class="bk-hist-failed"><div class="fl-head">失败 '+failedList.length+' 个：</div><div class="fl-list">'+failedList.map(esc).join("<br>")+'</div></div>'
+        : '';
+      item.innerHTML=
+          '<div class="bk-hist-row">'+
+            '<span class="bk-hist-time">'+esc(fmtBackupTime(rec.ts))+'</span>'+
+            '<span class="bk-hist-badge '+badgeCls+'">'+badgeTxt+'</span>'+
+          '</div>'+
+          '<div class="bk-hist-stats">'+
+            '<span>总数 <b>'+total+'</b></span>'+
+            '<span>成功 <b>'+success+'</b></span>'+
+            '<span>失败 <b>'+failed+'</b></span>'+
+            '<span>耗时 <b>'+fmtDurationMs(+rec.duration_ms||0)+'</b></span>'+
+          '</div>'+
+          failedBlock;
+      listHost.appendChild(item);
+    });
+  }).catch(e=>{
+    if(emptyEl)emptyEl.textContent="加载失败："+e.message;
+  });
+}
+// 毫秒 → "1m23s" / "42s" 紧凑展示
+function fmtDurationMs(ms){
+  ms=+ms||0;
+  if(ms<1000)return ms+"ms";
+  const s=Math.round(ms/1000);
+  if(s<60)return s+"s";
+  const m=Math.floor(s/60),rs=s%60;
+  return m+"m"+(rs>0?rs+"s":"");
+}
 function saveRemoteBase(){
   const remoteEl=document.getElementById("bk-remote");
   if(!remoteEl)return;
@@ -786,6 +877,8 @@ window.__onBackupProgress=function(p){
     if(fillEl)fillEl.style.width="0%";
     if(curEl){curEl.textContent=p.message||"出错";curEl.className="bk-prog-cur err";}
   }
+  // 备份结束（done/error）后刷新历史列表，确保最新一条入库后立即可见
+  if(bkPhase==="done"||bkPhase==="error"){setTimeout(loadBackupHistory,800);}
 };
 
 /* ========= 原生系统返回/侧滑返回 转发处理（避免滑动就退桌面） =========

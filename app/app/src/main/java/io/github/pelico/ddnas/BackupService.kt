@@ -58,6 +58,8 @@ class BackupService : Service() {
 
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
         val manifest = BackupManifest(this, treeUri.toString())
+        val startTime = System.currentTimeMillis()
+        val failedFiles = mutableListOf<String>()
         try {
             // 持久化 SAF 权限，避免重启后失效
             try {
@@ -133,6 +135,7 @@ class BackupService : Service() {
                     manifest.markUploaded(rel, file.length(), file.lastModified())
                 } else {
                     failed++
+                    failedFiles.add(rel)
                 }
                 done++
                 _progress.value = Progress.Running(done, total, file.name ?: rel)
@@ -143,6 +146,8 @@ class BackupService : Service() {
                 if (skipped > 0) append("，跳过 $skipped 个未变更")
                 if (failed > 0) append("，失败 $failed 个")
             }
+            // 上报备份历史到中间件 SQLite
+            reportHistory(origin, cookie, startTime, total, done - failed, failed, failedFiles, treeUri.toString(), remoteBase)
             // 全部失败时报 Error，避免用户误以为备份成功
             if (failed == total) {
                 _progress.value = Progress.Error("全部 $failed 个文件上传失败（请检查 OpenList 挂载与写入权限）")
@@ -216,6 +221,29 @@ class BackupService : Service() {
             val rel = if (prefix.isEmpty()) name else "$prefix/$name"
             if (child.isDirectory) collect(child, rel, out)
             else if (child.isFile) out.add(child to rel)
+        }
+    }
+
+    /** 备份完成后上报历史到中间件 SQLite，供 portal 查看历史与失败文件列表。 */
+    private fun reportHistory(
+        origin: String, cookie: String, startTime: Long,
+        total: Int, success: Int, failed: Int, failedFiles: List<String>,
+        treeUri: String, remoteBase: String
+    ) {
+        try {
+            val duration = System.currentTimeMillis() - startTime
+            // 构造 JSON：{"ts":now,"duration_ms":dur,"total":N,"success":N,"failed":N,"failed_list":["a","b"],"tree_hash":"...","remote_base":"/.../"}
+            val fl = failedFiles.joinToString(",") { "\"${it.replace("\"", "\\\"")}\"" }
+            val treeHash = treeUri.hashCode().toString(16)
+            val json = """{"ts":${System.currentTimeMillis()},"duration_ms":$duration,"total":$total,"success":$success,"failed":$failed,"failed_list":[$fl],"tree_hash":"$treeHash","remote_base":"$remoteBase"}"""
+            val req = Request.Builder()
+                .url(origin.trimEnd('/') + "/portal/api/backup/history")
+                .apply { if (cookie.isNotEmpty()) header("Cookie", cookie) }
+                .post(RequestBody.create("application/json; charset=utf-8".toMediaType(), json))
+                .build()
+            client.newCall(req).execute().use { it.body?.string() }
+        } catch (e: Exception) {
+            Log_w("reportHistory fail", e)
         }
     }
 
