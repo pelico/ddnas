@@ -34,7 +34,6 @@ class BackupService : Service() {
 
     private val app: DdnasApplication get() = application as DdnasApplication
     private val client: OkHttpClient get() = app.okHttpClient
-    private val manifest by lazy { BackupManifest(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -58,6 +57,7 @@ class BackupService : Service() {
     }
 
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
+        val manifest = BackupManifest(this, treeUri.toString())
         try {
             // 持久化 SAF 权限，避免重启后失效
             try {
@@ -113,10 +113,21 @@ class BackupService : Service() {
                     return
                 }
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                val ok = try {
-                    uploadFile(origin, cookie, dest, file)
-                } catch (e: Exception) {
-                    Log_w("upload fail: $rel", e); false
+                // 单文件最多重试 3 次，指数退避：1s → 2s → 4s
+                var ok = false
+                for (attempt in 0..2) {
+                    if (cancelled) break
+                    ok = try {
+                        uploadFile(origin, cookie, dest, file)
+                    } catch (e: Exception) {
+                        Log_w("upload attempt ${attempt + 1} fail: $rel", e); false
+                    }
+                    if (ok) break
+                    if (attempt < 2) {
+                        val backoff = (1000L shl attempt) // 1s, 2s
+                        _progress.value = Progress.Running(done, total, "重试(${attempt + 1}/3) ${file.name ?: rel}")
+                        try { kotlinx.coroutines.delay(backoff) } catch (_: Exception) { break }
+                    }
                 }
                 if (ok) {
                     manifest.markUploaded(rel, file.length(), file.lastModified())
@@ -144,6 +155,58 @@ class BackupService : Service() {
             running = false
             cancelled = false
             stopSelf()
+        }
+    }
+
+    /**
+     * 供 [BackupWorker] 调用的入口，复用 [runBackup] 的核心逻辑。
+     * 不涉及 Service 生命周期（无 stopSelf / startForeground），
+     * 进度通过 [progress] StateFlow 暴露给 UI。
+     */
+    suspend fun runBackupForWorker(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
+        running = true
+        cancelled = false
+        try {
+            val manifest = BackupManifest(this, treeUri.toString())
+            val root = DocumentFile.fromTreeUri(this, treeUri) ?: return
+            if (!root.isDirectory) return
+            _progress.value = Progress.Scanning
+            val all = ArrayList<Pair<DocumentFile, String>>()
+            collect(root, "", all)
+            val toUpload = ArrayList<Pair<DocumentFile, String>>()
+            var skipped = 0
+            for ((file, rel) in all) {
+                if (!manifest.needUpload(rel, file.length(), file.lastModified())) { skipped++; continue }
+                toUpload.add(file to rel)
+            }
+            val total = toUpload.size
+            if (total == 0) { _progress.value = Progress.Done("无需备份"); return }
+            if (!mkdirRemote(origin, cookie, remoteBase)) {
+                _progress.value = Progress.Error("远程目录不可用：$remoteBase"); return
+            }
+            _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
+            var done = 0; var failed = 0
+            for ((file, rel) in toUpload) {
+                if (cancelled) break
+                val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
+                var ok = false
+                for (attempt in 0..2) {
+                    if (cancelled) break
+                    ok = try { uploadFile(origin, cookie, dest, file) } catch (e: Exception) { Log_w("worker upload fail: $rel", e); false }
+                    if (ok) break
+                    if (attempt < 2) try { kotlinx.coroutines.delay(1000L shl attempt) } catch (_: Exception) { break }
+                }
+                if (ok) manifest.markUploaded(rel, file.length(), file.lastModified()) else failed++
+                done++
+                _progress.value = Progress.Running(done, total, file.name ?: rel)
+            }
+            if (failed == total) { _progress.value = Progress.Error("全部 $failed 个文件上传失败") }
+            else { _progress.value = Progress.Done("备份完成：上传 $done 个${if (failed > 0) "，失败 $failed 个" else ""}") }
+        } catch (e: Exception) {
+            _progress.value = Progress.Error(e.message ?: "备份失败")
+        } finally {
+            running = false
+            cancelled = false
         }
     }
 

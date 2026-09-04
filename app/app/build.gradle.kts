@@ -87,6 +87,9 @@ dependencies {
     // SAF 文档树遍历（备份选目录后递归上传）。
     implementation("androidx.documentfile:documentfile:1.0.1")
 
+    // WorkManager：定时增量备份调度（PeriodicWorkRequest + 充电/Wi-Fi 约束）。
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     // 网络层：仅 OkHttp（WebView 同源 cookie 会话；ExoPlayer 与备份服务注入 cookie 头）。
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

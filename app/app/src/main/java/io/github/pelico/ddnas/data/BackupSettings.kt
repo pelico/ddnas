@@ -45,21 +45,24 @@ class BackupStore(private val context: Context) {
 
 /**
  * 备份清单：记录已上传文件的 size + lastModified，用于增量备份。
- * 用 SharedPreferences（key=relPath, value="size|mtime"），下次只传变更的文件。
+ * 用 SharedPreferences（key=treeUriHash:relPath, value="size|mtime"），下次只传变更的文件。
+ * key 加 treeUri 前缀隔离，切换备份源目录不会误判"已备份"。
  */
-class BackupManifest(context: Context) {
+class BackupManifest(context: Context, treeUri: String) {
     private val prefs = context.getSharedPreferences("ddnas_backup_manifest", 0)
+    // 用 treeUri 的 hashCode 做命名空间前缀，避免不同目录树的同名文件误判
+    private val prefix = treeUri.hashCode().toString(16) + ":"
 
     /** 返回文件是否需要上传（size 或 mtime 变了）。 */
     fun needUpload(relPath: String, size: Long, mtime: Long): Boolean {
-        val prev = prefs.getString(relPath, null) ?: return true
+        val prev = prefs.getString(prefix + relPath, null) ?: return true
         val parts = prev.split("|")
         if (parts.size != 2) return true
         return parts[0].toLongOrNull() != size || parts[1].toLongOrNull() != mtime
     }
 
     fun markUploaded(relPath: String, size: Long, mtime: Long) {
-        prefs.edit().putString(relPath, "$size|$mtime").apply()
+        prefs.edit().putString(prefix + relPath, "$size|$mtime").apply()
     }
 
     fun clear() = prefs.edit().clear().apply()

@@ -392,6 +392,14 @@ class MainActivity : ComponentActivity() {
             kotlinx.coroutines.runBlocking { backupStore.setRemoteBase(base) }
         }
 
+        /** 开启/关闭自动备份。开启时注册 WorkManager 定时任务（充电+Wi-Fi 约束）。 */
+        @JavascriptInterface
+        fun setAutoBackup(on: Boolean) {
+            kotlinx.coroutines.runBlocking { backupStore.setAutoBackup(on) }
+            if (on) BackupWorker.enable(this@MainActivity)
+            else BackupWorker.disable(this@MainActivity)
+        }
+
         /** App 内查看图片：启动 ImageActivity 全屏 WebView 加载（注入 cookie）。
          *  仅 portal.html 里 viewImage() 在 ddnas 桥可用时调用。 */
         @JavascriptInterface

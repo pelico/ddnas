@@ -26,8 +26,9 @@ type Adapter struct {
 	endpoint     string
 	token        string // OpenList/AList 的访问令牌（JWT）
 	root         string // 挂载根路径前缀，默认 "/"
-	client       *http.Client // 普通 API 调用（list/get/upload），带整体超时
+	client       *http.Client // 普通 API 调用（list/get/mkdir），带整体超时
 	streamClient *http.Client // 流代理专用：不设整体超时，仅限响应头到达时间，避免大文件中途断流
+	uploadClient *http.Client // 上传专用：无整体超时，大文件（GB 级）传完才收响应头
 }
 
 func (a *Adapter) Name() string { return "openlist" }
@@ -61,6 +62,15 @@ func (a *Adapter) Init(raw map[string]any) error {
 		Timeout: 0,
 		Transport: &http.Transport{
 			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+	// upload client：大文件上传可能耗时很长（GB 级 + 慢链路），
+	// 无整体超时、无 ResponseHeaderTimeout（响应头在 body 传完后才返回）
+	a.uploadClient = &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 0,
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
@@ -127,9 +137,13 @@ func (a *Adapter) Test(raw map[string]any) plugin.TestResult {
 
 func (a *Adapter) Close() error { return nil }
 
-// joinPath 拼接 root 与相对路径。
+// joinPath 拼接 root 与相对路径。拒绝含 .. 的路径以防穿越。
 func (a *Adapter) joinPath(p string) string {
 	if p == "" {
+		return a.root
+	}
+	// 防路径穿越：拒绝含 .. 的路径
+	if strings.Contains(p, "..") {
 		return a.root
 	}
 	if strings.HasPrefix(p, "/") {
@@ -311,7 +325,7 @@ func (a *Adapter) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if ct := r.Header.Get("Content-Length"); ct != "" {
 		req.Header.Set("Content-Length", ct)
 	}
-	resp, err := a.client.Do(req)
+	resp, err := a.uploadClient.Do(req)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "上传到 OpenList 失败: "+err.Error())
 		return

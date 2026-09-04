@@ -225,6 +225,20 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 }
 .bk-btn:active{opacity:.6}
 .bk-row.warn .bk-v{color:var(--warn)}
+/* 自动备份开关 toggle */
+.bk-toggle{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0}
+.bk-toggle input{opacity:0;width:0;height:0}
+.bk-toggle-slider{
+  position:absolute;cursor:pointer;inset:0;
+  background:var(--chip);border:1px solid var(--bd);
+  border-radius:12px;transition:.3s;
+}
+.bk-toggle-slider:before{
+  content:"";position:absolute;height:18px;width:18px;left:2px;top:2px;
+  background:var(--fg);border-radius:50%;transition:.3s;
+}
+.bk-toggle input:checked + .bk-toggle-slider{background:var(--accent);border-color:var(--accent)}
+.bk-toggle input:checked + .bk-toggle-slider:before{transform:translateX(18px);background:#fff}
 
 /* 备份进度条（内嵌面板，不弹窗） */
 .bk-progress{margin-top:10px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid var(--bd)}
@@ -362,6 +376,11 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           <div class="bk-k">上次备份</div>
           <div class="bk-v" id="bk-last">—</div>
           <button class="bk-btn" id="bk-refresh-cfg" onclick="loadBackupConfig()">刷新</button>
+        </div>
+        <div class="bk-row">
+          <div class="bk-k">自动备份</div>
+          <div class="bk-v" id="bk-auto-desc" style="font-size:12px;color:var(--muted)">充电+Wi-Fi 时每 15 分钟自动增量备份</div>
+          <label class="bk-toggle"><input type="checkbox" id="bk-auto" onchange="onToggleAutoBackup(this.checked)" /><span class="bk-toggle-slider"></span></label>
         </div>
         <div class="bk-progress" id="bk-progress" style="display:none">
           <div class="bk-prog-head">
@@ -653,6 +672,9 @@ function loadBackupConfig(){
     remoteEl.value=cfg.remoteBase||"/手机备份/";
   }
   if(lastEl)lastEl.textContent=fmtBackupTime(cfg.lastBackupTime);
+  // 自动备份开关
+  const autoEl=document.getElementById("bk-auto");
+  if(autoEl){autoEl.checked=!!cfg.autoBackup;}
 }
 function saveRemoteBase(){
   const remoteEl=document.getElementById("bk-remote");
@@ -702,6 +724,24 @@ function onQuickBackup(){
   // 原生侧 isRunning 拦截 race，返回 "running" 时给提示
   const r=ddnas.startBackup();
   if(r==="running")toast("备份进行中，请先取消或等待完成");
+}
+// 自动备份开关：调原生桥 setAutoBackup(true/false)，注册/取消 WorkManager 定时任务
+function onToggleAutoBackup(on){
+  if(typeof ddnas==="undefined"||!ddnas.setAutoBackup){
+    toast("自动备份请在 App 内使用");
+    // 回滚开关
+    const autoEl=document.getElementById("bk-auto");
+    if(autoEl)autoEl.checked=!on;
+    return;
+  }
+  try{
+    ddnas.setAutoBackup(on);
+    toast(on?"已开启自动备份（充电+Wi-Fi 时每 15 分钟）":"已关闭自动备份",1200);
+  }catch(e){
+    toast("设置失败："+e.message);
+    const autoEl=document.getElementById("bk-auto");
+    if(autoEl)autoEl.checked=!on;
+  }
 }
 // 由 MainActivity evaluateJavascript 推送：__onBackupProgress(<Progress JSON 对象>)
 window.__onBackupProgress=function(p){
