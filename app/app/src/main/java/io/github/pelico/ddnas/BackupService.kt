@@ -57,7 +57,7 @@ class BackupService : Service() {
     }
 
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
-        val manifest = BackupManifest(this, treeUri.toString())
+        val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
         val startTime = System.currentTimeMillis()
         val failedFiles = mutableListOf<String>()
         try {
@@ -190,7 +190,7 @@ class BackupService : Service() {
         running = true
         cancelled = false
         try {
-            val manifest = BackupManifest(this, treeUri.toString())
+            val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
             val root = DocumentFile.fromTreeUri(this, treeUri) ?: return
             if (!root.isDirectory) return
             _progress.value = Progress.Scanning

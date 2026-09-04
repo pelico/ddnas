@@ -45,13 +45,15 @@ class BackupStore(private val context: Context) {
 
 /**
  * 备份清单：记录已上传文件的 size + lastModified，用于增量备份。
- * 用 SharedPreferences（key=treeUriHash:relPath, value="size|mtime"），下次只传变更的文件。
- * key 加 treeUri 前缀隔离，切换备份源目录不会误判"已备份"。
+ * 用 SharedPreferences（key=treeUriHash:remoteBaseHash:relPath, value="size|mtime"），下次只传变更的文件。
+ * key 同时加 treeUri 与 remoteBase 前缀隔离：
+ * - 切换本地源目录 → treeUri 变，独立命名空间
+ * - 切换远程目标位置 → remoteBase 变，独立命名空间，避免"在 A 备份后切到 B 误判已备份"
  */
-class BackupManifest(context: Context, treeUri: String) {
+class BackupManifest(context: Context, treeUri: String, remoteBase: String) {
     private val prefs = context.getSharedPreferences("ddnas_backup_manifest", 0)
-    // 用 treeUri 的 hashCode 做命名空间前缀，避免不同目录树的同名文件误判
-    private val prefix = treeUri.hashCode().toString(16) + ":"
+    // 用 treeUri + remoteBase 的 hashCode 做命名空间前缀，避免不同目录树/不同目标位置的同名文件误判
+    private val prefix = treeUri.hashCode().toString(16) + ":" + remoteBase.hashCode().toString(16) + ":"
 
     /** 返回文件是否需要上传（size 或 mtime 变了）。 */
     fun needUpload(relPath: String, size: Long, mtime: Long): Boolean {
