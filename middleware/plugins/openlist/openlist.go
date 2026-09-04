@@ -146,10 +146,18 @@ func (a *Adapter) joinPath(p string) string {
 	if strings.Contains(p, "..") {
 		return a.root
 	}
-	if strings.HasPrefix(p, "/") {
-		p = strings.TrimPrefix(p, "/")
+	p = strings.TrimPrefix(p, "/")
+	joined := path.Join(a.root, p)
+	if joined == "" || joined == "." {
+		return "/"
 	}
-	return path.Join(a.root, p)
+	// OpenList API 期望绝对路径（/存储名/子路径），确保前导 /
+	// 避免 a.root="" 时返回无前导/的路径，依赖 OpenList 内部补全
+	// （旧版能补，但不同版本行为不一，显式带前导 / 更稳妥）
+	if !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+	return joined
 }
 
 // --- handlers ---
