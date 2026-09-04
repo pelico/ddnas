@@ -138,7 +138,7 @@ class BackupService : Service() {
                 for (attempt in 0..2) {
                     if (cancelled) break
                     ok = try {
-                        uploadFile(origin, cookie, dest, file)
+                        uploadFile(origin, cookie, dest, file, done, total)
                     } catch (e: Exception) {
                         Log_w("upload attempt ${attempt + 1} fail: $rel", e); false
                     }
@@ -222,7 +222,7 @@ class BackupService : Service() {
                 var ok = false
                 for (attempt in 0..2) {
                     if (cancelled) break
-                    ok = try { uploadFile(origin, cookie, dest, file) } catch (e: Exception) { Log_w("worker upload fail: $rel", e); false }
+                    ok = try { uploadFile(origin, cookie, dest, file, done, total) } catch (e: Exception) { Log_w("worker upload fail: $rel", e); false }
                     if (ok) break
                     if (attempt < 2) try { kotlinx.coroutines.delay(1000L shl attempt) } catch (_: Exception) { break }
                 }
@@ -278,23 +278,23 @@ class BackupService : Service() {
         val base = remoteBase.trimEnd('/')
         if (base.isEmpty()) return null  // 根目录跳过
         val url = origin.trimEnd('/') + "/portal/api/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
+        android.util.Log.i("DDNAS-Backup", "mkdir start: $base")
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
         }.post(EMPTY_BODY).build()
         return try {
             client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string() ?: ""
+                android.util.Log.i("DDNAS-Backup", "mkdir end: $base code=${resp.code} body=${body.take(160)}")
                 if (!resp.isSuccessful) {
                     // 401 = cookie 失效；其他 = 上游/路径问题
                     val hint = if (resp.code == 401) "登录已失效，请重新打开页面后再备份"
                                else "HTTP ${resp.code}"
-                    Log_w("mkdir fail: $base HTTP ${resp.code} body=${body.take(120)}", Exception("mkdir HTTP ${resp.code}"))
                     "远程目录不可用：$base（$hint）"
                 } else if (!body.contains("\"ok\":true") && !body.contains("\"ok\": true")) {
                     // 业务失败：上游返回 ok:false 或错误 JSON，尝试提取 error/message
                     val msg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                         ?: body.take(80)
-                    Log_w("mkdir biz fail: $base body=${body.take(120)}", Exception("mkdir biz fail"))
                     "远程目录不可用：$base（$msg）"
                 } else {
                     null
@@ -337,28 +337,59 @@ class BackupService : Service() {
         return null
     }
 
-    private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile): Boolean {
+    private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile, done: Int, total: Int): Boolean {
         val url = origin.trimEnd('/') + "/portal/api/files/upload?path=" + URLEncoder.encode(dest, "UTF-8")
         val length = file.length()
+        val name = file.name ?: dest.substringAfterLast('/')
+        android.util.Log.i("DDNAS-Backup", "upload start: $name size=${fmtBytes(length)} dest=$dest")
         // 流式 RequestBody：直接读 contentResolver 流，避免整文件入内存。
+        // 每 1MB 更新一次进度，避免大视频文件上传时 UI 卡在 0/total 不刷新
+        // （用户误以为卡死；实际正在传，只是没有进度回调）
         val body = object : RequestBody() {
             override fun contentType() = "application/octet-stream".toMediaType()
             override fun contentLength(): Long = length
             override fun writeTo(sink: okio.BufferedSink) {
                 contentResolver.openInputStream(file.uri)?.use { input: InputStream ->
                     val buf = ByteArray(64 * 1024)
+                    var sent = 0L
+                    var lastReport = 0L
                     while (true) {
                         val n = input.read(buf)
                         if (n <= 0) break
                         sink.write(buf, 0, n)
+                        sent += n.toLong()
+                        // 每 1MB 或完成时更新一次，避免高频刷新卡 UI
+                        if (sent - lastReport >= 1024 * 1024 || sent == length) {
+                            lastReport = sent
+                            _progress.value = Progress.Running(done, total, "$name (${fmtBytes(sent)}/${fmtBytes(length)})")
+                        }
                     }
-                } ?: throw IllegalStateException("无法读取文件 ${file.name}")
+                } ?: throw IllegalStateException("无法读取文件 $name")
             }
         }
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
         }.put(body).build()
-        return client.newCall(req).execute().use { it.isSuccessful }
+        return try {
+            client.newCall(req).execute().use { resp ->
+                val ok = resp.isSuccessful
+                android.util.Log.i("DDNAS-Backup", "upload end: $name ok=$ok code=${resp.code} sent=${fmtBytes(length)}")
+                ok
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DDNAS-Backup", "upload exception: $name", e)
+            throw e
+        }
+    }
+
+    /** 字节数 → "12.3MB" / "456KB" / "1.2GB"，便于进度展示。 */
+    private fun fmtBytes(b: Long): String {
+        if (b < 1024) return b.toString() + "B"
+        val kb = b / 1024.0
+        if (kb < 1024) return String.format("%.1fKB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format("%.1fMB", mb)
+        return String.format("%.2fGB", mb / 1024.0)
     }
 
     private fun buildNotification(text: String, done: Int, total: Int): Notification {

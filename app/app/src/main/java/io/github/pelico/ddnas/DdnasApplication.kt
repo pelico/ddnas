@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 /**
  * 全局：共享 OkHttpClient、应用级协程作用域、备份进度状态。
@@ -32,6 +33,16 @@ class DdnasApplication : Application() {
             .addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("User-Agent", ua).build())
             }
+            // connect 15s：建连慢（CF/弱网）也不至于永久卡死
+            .connectTimeout(15, TimeUnit.SECONDS)
+            // read/write 60s：单次 socket 读写最长 60s，避免大文件上传中途
+            // 网络抖动时一直挂起（write 60s 不限制总上传时长，单次 chunk
+            // 写得动就续传，配合 RequestBody 流式写入可承 GB 级文件）
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            // callTimeout 0=不限制：大视频文件上传可能耗时数分钟，
+            // 不能用整体超时切断；用上面的 read/write 控制单次 socket 死活
+            .callTimeout(0, TimeUnit.SECONDS)
             .build()
     }
 
