@@ -305,6 +305,40 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .tabbar button .lb{font-size:11px}
 .tabbar button.on{color:var(--accent)}
 
+/* ===== 下载页（DDM3U8 任务管理） ===== */
+.dl-bar{position:sticky;top:0;z-index:10;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid transparent}
+.dl-bar .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px}
+.dl-title{flex:1;font-weight:700;font-size:16px}
+.dl-refresh{width:34px;height:34px;border-radius:10px;background:var(--surface2);border:1px solid var(--bd);font-size:15px;display:inline-flex;align-items:center;justify-content:center}
+.dl-refresh:active{opacity:.6}
+.dl-page{padding:4px 14px 12px}
+.dl-submit{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px}
+.dl-submit textarea,.dl-submit input{width:100%;font:inherit;font-size:13px;color:var(--fg);background:var(--surface2);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;box-sizing:border-box}
+.dl-submit textarea{min-height:64px;resize:vertical;line-height:1.4}
+.dl-submit textarea:focus,.dl-submit input:focus{outline:none;border-color:var(--accent)}
+.dl-submit .dl-go{background:var(--accent);color:#fff;border-radius:10px;padding:10px;font-size:14px;font-weight:600}
+.dl-submit .dl-go:active{opacity:.7}
+.dl-submit .dl-go:disabled{background:var(--muted2);opacity:.5;cursor:not-allowed}
+.dl-stat{font-size:11px;color:var(--muted);text-align:right}
+.dl-list{display:flex;flex-direction:column;gap:8px}
+.dl-task{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.dl-task-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dl-task-name{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dl-badge{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.dl-badge.queued{background:rgba(52,120,246,.12);color:var(--accent)}
+.dl-badge.running{background:rgba(37,194,117,.12);color:var(--ok)}
+.dl-badge.paused{background:rgba(245,166,35,.14);color:var(--warn)}
+.dl-badge.done{background:rgba(37,194,117,.12);color:var(--ok)}
+.dl-badge.error{background:rgba(239,91,91,.12);color:var(--err)}
+.dl-task-meta{font-size:11px;color:var(--muted);margin-top:4px;display:flex;gap:10px;flex-wrap:wrap}
+.dl-task-meta b{color:var(--fg);font-weight:600}
+.dl-task-log{font-size:11px;color:var(--muted);margin-top:4px;white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:auto;background:var(--surface2);border-radius:6px;padding:4px 6px;line-height:1.4}
+.dl-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.dl-act{font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--chip);color:var(--fg)}
+.dl-act:active{opacity:.6}
+.dl-act.danger{color:var(--err);border-color:var(--err)}
+.dl-empty{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+
 /* ===== 通用 ===== */
 .hidden{display:none !important}
 .toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 14px;border-radius:10px;font-size:13px;z-index:99;opacity:0;transition:opacity .2s;pointer-events:none}
@@ -456,6 +490,28 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   </div>
 </section>
 
+<!-- ========== 下载页（DDM3U8 任务管理，从首页宫格进入） ========== -->
+<section id="view-download" class="hidden">
+  <div class="dl-bar">
+    <button class="back" onclick="setTab('home')" title="返回首页">←</button>
+    <div class="dl-title">下载任务</div>
+    <button class="dl-refresh" onclick="loadDownloadTasks()" title="刷新">↻</button>
+  </div>
+  <div class="dl-page">
+    <!-- 提交表单：url 必填，DDM3U8 会从文本里正则识别多个 m3u8 链接 -->
+    <div class="dl-submit">
+      <textarea id="dl-url" placeholder="粘贴 m3u8 链接（支持多个，自动识别）"></textarea>
+      <input id="dl-name" type="text" placeholder="文件名前缀（可选，默认 video）" />
+      <input id="dl-referer" type="text" placeholder="Referer（可选，防盗链站点需要）" />
+      <input id="dl-subpath" type="text" placeholder="子目录（可选，仅一层名）" />
+      <button class="dl-go" id="dl-go" onclick="submitDownload()">提交下载</button>
+      <div class="dl-stat" id="dl-stat">活跃 <b id="dl-active">0</b>/<b id="dl-max">0</b> 并发</div>
+    </div>
+    <!-- 任务列表：从 /portal/api/download/tasks 实时拉取，DDM3U8 状态中文 → 徽章映射 -->
+    <div class="dl-list" id="dl-list"><div class="dl-empty">加载中…</div></div>
+  </div>
+</section>
+
 <!-- ========== 底部 Tab ========== -->
 <nav class="tabbar">
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
@@ -536,13 +592,20 @@ if(typeof ddnas==="undefined"){
 let curTab="home";
 function setTab(t){
   curTab=t;
+  // view 容器：含 download（非 tabbar 页，从首页宫格进入）
+  ["home","files","me","download"].forEach(k=>{
+    const el=document.getElementById("view-"+k);
+    if(el)el.classList.toggle("hidden",k!==t);
+  });
+  // tabbar 高亮：只有 home/files/me 三栏，download 不高亮任何 tab
   ["home","files","me"].forEach(k=>{
-    document.getElementById("view-"+k).classList.toggle("hidden",k!==t);
-    document.getElementById("tab-"+k).classList.toggle("on",k===t);
+    const el=document.getElementById("tab-"+k);
+    if(el)el.classList.toggle("on",k===t);
   });
   if(t==="home"&&!homeLoaded)loadHome();
   if(t==="files"&&!filesLoadedEver)loadFiles("");
   if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();loadBackupHistory();}
+  if(t==="download")loadDownloadTasks();
   // 滚动回到顶部
   window.scrollTo({top:0,behavior:"instant"});
 }
@@ -552,6 +615,7 @@ function setTab(t){
 const FEATURES=[
   {id:"cloud",label:"云盘",icon:"📁",cls:"c1",cap:"files",on(){setTab("files");}},
   {id:"backup",label:"手机备份",icon:"💾",cls:"c6",cap:"backup",on(){onQuickBackup();}},
+  {id:"download",label:"下载",icon:"⬇️",cls:"c2",cap:"download",on(){setTab("download");}},
 ];
 let caps=new Set();
 function renderGrid(){
@@ -882,6 +946,105 @@ window.__onBackupProgress=function(p){
   if(bkPhase==="done"||bkPhase==="error"){setTimeout(loadBackupHistory,800);}
 };
 
+/* ========= 下载任务管理（DDM3U8，通过能力路由 /portal/api/download/*） =========
+ * DDM3U8 状态用中文（排队中/下载中/合并中/转换中/已暂停/已取消/已完成/失败），
+ * 前端映射成 5 类徽章：queued/running/paused/done/error 便于统一视觉。
+ * 所有请求经中间件反代，Basic Auth 由适配器注入，前端只走 cookie 会话。
+ */
+// DDM3U8 中文状态 → 徽章类 + 简称
+function dlStatusBadge(s){
+  s=String(s||"");
+  if(s==="排队中"||s==="等待FFmpeg")return ["queued","排队"];
+  if(s==="下载中"||s==="合并中"||s==="转换中")return ["running",s];
+  if(s==="已暂停")return ["paused","暂停"];
+  if(s==="已完成")return ["done","完成"];
+  if(s==="失败"||s==="已取消")return ["error",s==="已取消"?"取消":"失败"];
+  return ["",s];
+}
+function loadDownloadTasks(){
+  const listEl=document.getElementById("dl-list");
+  const activeEl=document.getElementById("dl-active");
+  const maxEl=document.getElementById("dl-max");
+  if(!listEl)return; // 不在 download 页
+  listEl.innerHTML='<div class="dl-empty"><span class="spin"></span>加载中…</div>';
+  fetch("/portal/api/download/tasks").then(r=>{
+    if(!r.ok)throw new Error("HTTP "+r.status+(r.status===404?"（下载适配器未启用）":""));
+    return r.json();
+  }).then(resp=>{
+    if(activeEl)activeEl.textContent=resp.active_workers||0;
+    if(maxEl)maxEl.textContent=resp.max_workers||0;
+    // tasks 是对象 {id: task}，task_order 是 id 数组（按 created_at 倒序）
+    const order=resp.task_order||[];
+    const tasks=resp.tasks||{};
+    if(!order.length){listEl.innerHTML='<div class="dl-empty">暂无下载任务</div>';return;}
+    listEl.innerHTML=order.map(function(tid){
+      const t=tasks[tid]||{};
+      const name=esc(t.name||tid);
+      const [bc,bl]=dlStatusBadge(t.status);
+      const ct=fmtBackupTime(t.created_at?Date.parse(t.created_at):0);
+      const log=t.log?('<div class="dl-task-log">'+esc(t.log)+'</div>'):'';
+      // 操作按钮：按状态显示可用动作
+      const st=t.status;
+      let acts='<div class="dl-actions">';
+      if(st==="下载中"||st==="合并中"||st==="转换中")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'pause\')">暂停</button>';
+      if(st==="已暂停")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'resume\')">恢复</button>';
+      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
+      if(st!=="下载中"&&st!=="合并中"&&st!=="转换中"&&st!=="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">删除</button>';
+      acts+='</div>';
+      return '<div class="dl-task"><div class="dl-task-head"><span class="dl-task-name">'+name+'</span><span class="dl-badge '+bc+'">'+esc(bl)+'</span></div><div class="dl-task-meta"><span>'+ct+'</span></div>'+log+acts+'</div>';
+    }).join("");
+  }).catch(e=>{
+    listEl.innerHTML='<div class="dl-empty">加载失败：'+esc(e.message)+'</div>';
+  });
+}
+// 提交下载：构造 form-data，DDM3U8 /down 接口要求表单字段而非 JSON
+function submitDownload(){
+  const urlEl=document.getElementById("dl-url");
+  const nameEl=document.getElementById("dl-name");
+  const refEl=document.getElementById("dl-referer");
+  const subEl=document.getElementById("dl-subpath");
+  const goBtn=document.getElementById("dl-go");
+  if(!urlEl)return;
+  const url=urlEl.value.trim();
+  if(!url){toast("请粘贴 m3u8 链接");urlEl.focus();return;}
+  if(goBtn){goBtn.disabled=true;goBtn.textContent="提交中…";}
+  const fd=new FormData();
+  fd.append("url",url);
+  fd.append("name",nameEl?nameEl.value.trim():"video");
+  if(refEl&&refEl.value.trim())fd.append("referer",refEl.value.trim());
+  if(subEl&&subEl.value.trim())fd.append("sub_path",subEl.value.trim());
+  fetch("/portal/api/download/submit",{method:"POST",body:fd}).then(r=>{
+    return r.json().then(j=>({ok:r.ok,j}));
+  }).then(({ok,j})=>{
+    if(goBtn){goBtn.disabled=false;goBtn.textContent="提交下载";}
+    if(ok){
+      toast("提交成功："+(j.message||"已创建任务"),1800);
+      if(urlEl)urlEl.value="";
+      if(nameEl)nameEl.value="";
+      if(refEl)refEl.value="";
+      if(subEl)subEl.value="";
+      setTimeout(loadDownloadTasks,300);
+    }else{
+      toast("提交失败："+(j.error||"未知错误"),3000);
+    }
+  }).catch(e=>{
+    if(goBtn){goBtn.disabled=false;goBtn.textContent="提交下载";}
+    toast("提交失败："+e.message,3000);
+  });
+}
+// 任务操作：pause/resume/cancel/merge，POST JSON {action:...} 到 /download/task/<id>
+function taskAction(tid,action){
+  if(!tid)return;
+  const tip={pause:"暂停",resume:"恢复",cancel:"取消",merge:"合并"}[action]||action;
+  fetch("/portal/api/download/task/"+encodeURIComponent(tid),{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action:action})
+  }).then(r=>{
+    if(r.ok){toast(tip+" 已执行",1000);setTimeout(loadDownloadTasks,400);}
+    else{toast(tip+" 失败：HTTP "+r.status,2000);}
+  }).catch(e=>toast(tip+" 失败："+e.message,2000));
+}
+
 /* ========= 原生系统返回/侧滑返回 转发处理（避免滑动就退桌面） =========
  * 由 MainActivity.onBackPressed 回调触发，同步返回字符串状态：
  *   handled     — 已在 H5 内部消费（文件页 goUp / 切回首页）
@@ -897,12 +1060,12 @@ window.__onNativeBack=function(){
     setTab("home");
     return "handled";
   }
-  // 2) 我的页 → 切回首页
-  if(curTab==="me"){
+  // 2) 下载页 / 我的页 → 切回首页
+  if(curTab==="download"||curTab==="me"){
     setTab("home");
     return "handled";
   }
-  // 3) 首页 → 交给原生 finish() 退出 App
+  // 3) 首页 → 交给原生 finish() 退出
   return "not_handled";
 };
 

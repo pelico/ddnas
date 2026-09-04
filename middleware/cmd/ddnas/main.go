@@ -14,6 +14,7 @@ import (
 	"github.com/pelico/ddnas/middleware/internal/server"
 	"github.com/pelico/ddnas/middleware/internal/plugin"
 	"github.com/pelico/ddnas/middleware/internal/store"
+	_ "github.com/pelico/ddnas/middleware/plugins/ddm3u8"
 	_ "github.com/pelico/ddnas/middleware/plugins/downloader"
 	_ "github.com/pelico/ddnas/middleware/plugins/nodeexporter"
 	_ "github.com/pelico/ddnas/middleware/plugins/openlist"

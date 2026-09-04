@@ -90,33 +90,41 @@ func (s *Server) Reload() {
 			mux.HandleFunc(rt.Method+" "+portal, s.admin.AuthedAPI(rt.Handler))
 		}
 	}
-	// 能力路由：将第一个声明 "files" 能力的 adapter 的 /files/* 路由
-	// 额外挂载为通用 /api/files/* 和 /portal/api/files/*，
-	// 使前端/App 只依赖能力名称，不耦合具体 adapter 名。
-	var filesAdapter plugin.Adapter
+	// 能力路由：把声明某能力的首个 adapter 的 /<能力>/* 路由挂到通用
+	// /api/<能力>/* 与 /portal/api/<能力>/*，前端/App 只依赖能力名，不耦合 adapter 名。
+	// 新增能力只需在此追加一行 mountCapability 调用，核心无需改动。
+	s.mountCapability(mux, "files", cfg.Auth.AppToken)
+	s.mountCapability(mux, "download", cfg.Auth.AppToken)
+	s.mux = mux
+}
+
+// mountCapability 找到第一个声明该能力的已启用 adapter，把它所有以
+// "/<capability>" 开头的子路由镜像挂载到通用 Bearer（/api/*）与 cookie 会话
+// （/portal/api/*）前缀。同能力多 adapter 只取首个（用户按需启用其一即可）。
+func (s *Server) mountCapability(mux *http.ServeMux, capability, appToken string) {
+	prefix := "/" + capability
 	for _, a := range s.active {
+		matched := false
 		for _, c := range a.Capabilities() {
-			if c == "files" {
-				filesAdapter = a
+			if c == capability {
+				matched = true
 				break
 			}
 		}
-		if filesAdapter != nil {
-			break
+		if !matched {
+			continue
 		}
-	}
-	if filesAdapter != nil {
-		for _, rt := range filesAdapter.Routes() {
-			if !strings.HasPrefix(rt.Path, "/files") {
+		for _, rt := range a.Routes() {
+			if !strings.HasPrefix(rt.Path, prefix) {
 				continue
 			}
-			genericBearer := "/api" + rt.Path // /api/files/list, /api/files/upload ...
-			mux.HandleFunc(rt.Method+" "+genericBearer, s.authed(rt.Handler, cfg.Auth.AppToken))
+			genericBearer := "/api" + rt.Path // /api/files/list, /api/download/tasks ...
+			mux.HandleFunc(rt.Method+" "+genericBearer, s.authed(rt.Handler, appToken))
 			genericPortal := "/portal/api" + rt.Path // /portal/api/files/list ...
 			mux.HandleFunc(rt.Method+" "+genericPortal, s.admin.AuthedAPI(rt.Handler))
 		}
+		return // 同能力只挂首个 adapter
 	}
-	s.mux = mux
 }
 
 // Run 启动 HTTP 服务。
