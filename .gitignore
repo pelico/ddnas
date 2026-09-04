@@ -22,3 +22,24 @@ middleware/bin/
 *.exe
 *.test
 *.out
+
+# IDE 临时文件 / 元数据
+.aj.json
+.ar.json
+.dj.json
+.jobs.json
+.pkgs.json
+.r3.json
+.runs2.json
+
+# 日志
+.dockerlog.txt
+.joblog.txt
+.joblog2.txt
+
+# 用户上传的图片（运行时数据，不入库）
+.uploads/
+
+# IDE 导出的 HTML 包
+.trae-html-share-packages/
+
