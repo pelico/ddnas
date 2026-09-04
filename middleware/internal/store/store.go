@@ -123,6 +123,22 @@ func (s *Store) ListBackupHistory(limit int) ([]BackupRecord, error) {
 	return out, nil
 }
 
+// ClearBackupHistory 清空全部备份历史（避免长期积累）。
+func (s *Store) ClearBackupHistory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM backup_history`)
+	return err
+}
+
+// DeleteBackupRecord 删除单条备份历史。
+func (s *Store) DeleteBackupRecord(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM backup_history WHERE id = ?`, id)
+	return err
+}
+
 // --- 下载任务 ---
 
 // DownloadTask 一条下载任务快照。

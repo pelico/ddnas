@@ -258,15 +258,23 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 /* 备份历史列表（最近 N 条，含失败文件展开） */
 .bk-history{margin-top:6px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid var(--bd)}
-.bk-hist-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:8px;color:var(--muted)}
+.bk-hist-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:8px;color:var(--muted);gap:8px}
+.bk-hist-actions{display:flex;gap:6px;flex-shrink:0}
 .bk-hist-refresh{font-size:11px;color:var(--accent);padding:2px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--chip)}
 .bk-hist-refresh:active{opacity:.6}
+.bk-hist-clear{font-size:11px;color:var(--err);padding:2px 8px;border-radius:6px;border:1px solid rgba(239,91,91,.35);background:rgba(239,91,91,.08)}
+.bk-hist-clear:active{opacity:.6}
 .bk-hist-empty{padding:14px;text-align:center;color:var(--muted2);font-size:12px}
 .bk-hist-item{padding:8px 0;border-top:1px solid var(--bd);font-size:12px}
 .bk-hist-item:first-child{border-top:0}
 .bk-hist-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .bk-hist-time{color:var(--fg);font-variant-numeric:tabular-nums;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bk-hist-badge{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.bk-hist-btns{display:flex;gap:6px;flex-shrink:0}
+.bk-hist-btn{font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--bd);background:var(--chip);color:var(--muted);white-space:nowrap}
+.bk-hist-btn:active{opacity:.6}
+.bk-hist-btn.del{color:var(--err);border-color:rgba(239,91,91,.3)}
+.bk-hist-btn.retry{color:var(--accent);border-color:rgba(56,130,255,.3)}
 .bk-hist-badge.ok{background:rgba(37,194,117,.12);color:var(--ok)}
 .bk-hist-badge.warn{background:rgba(245,166,35,.14);color:var(--warn)}
 .bk-hist-badge.err{background:rgba(239,91,91,.12);color:var(--err)}
@@ -453,7 +461,10 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
         <div class="bk-history" id="bk-history">
           <div class="bk-hist-head">
             <span>备份历史</span>
-            <button class="bk-hist-refresh" id="bk-hist-refresh" onclick="loadBackupHistory()">刷新</button>
+            <div class="bk-hist-actions">
+              <button class="bk-hist-refresh" id="bk-hist-refresh" onclick="loadBackupHistory()">刷新</button>
+              <button class="bk-hist-clear" id="bk-hist-clear" onclick="clearBackupHistory()">清空</button>
+            </div>
           </div>
           <div class="bk-hist-empty" id="bk-hist-empty">加载中…</div>
         </div>
@@ -807,10 +818,17 @@ function loadBackupHistory(){
       const failedBlock=failedList.length
         ? '<div class="bk-hist-failed"><div class="fl-head">失败 '+failedList.length+' 个：</div><div class="fl-list">'+failedList.map(esc).join("<br>")+'</div></div>'
         : '';
+      // 行内操作按钮：失败记录显示"重试"（调 App 桥 ddnas.startBackup 重新发起备份）；
+      // 每条都可"删除"（调 DELETE /portal/api/backup/history/{id}）
+      const retryBtn=(failed>0)
+        ? '<button class="bk-hist-btn retry" onclick="retryBackup(event)">重试</button>'
+        : '';
+      const delBtn='<button class="bk-hist-btn del" onclick="deleteBackupRecord(event,'+(+rec.id||0)+')">删除</button>';
       item.innerHTML=
           '<div class="bk-hist-row">'+
             '<span class="bk-hist-time">'+esc(fmtBackupTime(rec.ts))+'</span>'+
             '<span class="bk-hist-badge '+badgeCls+'">'+badgeTxt+'</span>'+
+            '<span class="bk-hist-btns">'+retryBtn+delBtn+'</span>'+
           '</div>'+
           '<div class="bk-hist-stats">'+
             '<span>总数 <b>'+total+'</b></span>'+
@@ -824,6 +842,49 @@ function loadBackupHistory(){
   }).catch(e=>{
     if(emptyEl)emptyEl.textContent="加载失败："+e.message;
   });
+}
+/* ========= 备份历史操作：清空 / 删除单条 / 重试 =========
+ * - 清空：DELETE /portal/api/backup/history，避免记录长期积累
+ * - 删除：DELETE /portal/api/backup/history/{id}，删单条
+ * - 重试：调 App JS 桥 ddnas.startBackup() 重新发起增量备份
+ *   （仅在 App WebView 内可用；浏览器访问 portal 时提示用户去 App 端）
+ */
+function clearBackupHistory(){
+  if(!confirm("确认清空全部备份历史？此操作不可撤销。"))return;
+  fetch("/portal/api/backup/history",{method:"DELETE",credentials:"same-origin"})
+    .then(r=>r.json())
+    .then(resp=>{
+      if(resp.error){toast("清空失败："+resp.error);return;}
+      toast("已清空备份历史");
+      loadBackupHistory();
+    })
+    .catch(e=>toast("清空失败："+e.message));
+}
+function deleteBackupRecord(ev,id){
+  if(ev&&ev.stopPropagation)ev.stopPropagation();
+  if(!id||id<=0){toast("无效记录");return;}
+  if(!confirm("删除这条备份记录？"))return;
+  fetch("/portal/api/backup/history/"+encodeURIComponent(id),{method:"DELETE",credentials:"same-origin"})
+    .then(r=>r.json())
+    .then(resp=>{
+      if(resp.error){toast("删除失败："+resp.error);return;}
+      toast("已删除");
+      loadBackupHistory();
+    })
+    .catch(e=>toast("删除失败："+e.message));
+}
+function retryBackup(ev){
+  if(ev&&ev.stopPropagation)ev.stopPropagation();
+  // App WebView 注入了 ddnas 桥时直接发起备份；浏览器访问则提示
+  if(typeof ddnas!=="undefined"&&ddnas&&typeof ddnas.startBackup==="function"){
+    const state=ddnas.startBackup();
+    if(state==="running"){toast("已有备份在运行中");}
+    else if(state==="started"){toast("已发起备份，请观察进度条");}
+    else if(state==="noDir"){toast("请先选择备份目录");}
+    else{toast("已发起备份");}
+  }else{
+    toast("请在 App 内点击重试，或重新发起备份");
+  }
 }
 // 毫秒 → "1m23s" / "42s" 紧凑展示
 function fmtDurationMs(ms){
@@ -1129,11 +1190,24 @@ function browseLoad(p){
   if(!pathEl||!listEl)return;
   pathEl.textContent="/"+browseCur;
   listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
-  fetch("/portal/api/files/list?path="+encodeURIComponent(browseCur),{credentials:"same-origin"}).then(r=>{
-    if(!r.ok)throw new Error("HTTP "+r.status+(r.status===401?"（登录已失效，请重新打开页面）":""));return r.json();
+  // AbortController + 超时：避免 WebView 内 fetch 卡死（Cloudflare/网络问题时一直 pending），
+  // 超时后明确提示，便于用户排查（而不是永远"加载中…"）。
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),15000);
+  const url="/portal/api/files/list?path="+encodeURIComponent(browseCur);
+  fetch(url,{credentials:"same-origin",signal:ctrl.signal}).then(r=>{
+    if(!r.ok){
+      // 401：cookie 失效，提示用户回首页触发重新登录
+      const hint=r.status===401?"（登录已失效，请下拉刷新或重新打开页面）":"";
+      throw new Error("HTTP "+r.status+hint);
+    }
+    return r.json();
   }).then(resp=>{
+    clearTimeout(timer);
+    if(resp.error)throw new Error(resp.error);
     const items=(resp.items||[]).filter(it=>{
-      const isDir=!!(it.is_dir||it.type==="folder");
+      // 兼容 is_dir 是 boolean 或 0/1 数字（AList 不同版本可能两种形式）
+      const isDir=!!(it.is_dir||it.is_dir===1||it.type==="folder");
       return isDir;  // 仅展示目录，文件不参与路径选择
     }).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
     if(!items.length){
@@ -1150,7 +1224,12 @@ function browseLoad(p){
       el.addEventListener("click",()=>browseLoad(el.dataset.rel||""));
     });
   }).catch(e=>{
-    listEl.innerHTML='<div class="bk-browse-empty">加载失败：'+esc(e.message)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
+    clearTimeout(timer);
+    // AbortError 单独标识：网络未在 15s 内响应（典型 Cloudflare 卡死）
+    const msg=e&&e.name==="AbortError"?"加载超时（15s 内无响应，可能网络受限或代理拦截）":e.message;
+    // 通过 ddnas 桥输出到 Logcat（App WebView 内可用）
+    try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log("[browse] "+url+" -> "+msg);}catch(_){}
+    listEl.innerHTML='<div class="bk-browse-empty">加载失败：'+esc(msg)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
   });
 }
 function browseUp(){

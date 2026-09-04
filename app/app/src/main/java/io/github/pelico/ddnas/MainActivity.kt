@@ -186,9 +186,17 @@ class MainActivity : ComponentActivity() {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = false
-                        webViewClient = WebViewClient()
-                        // 让 portal 的 <input type="file"> 上传按钮可用
+                        // Console 消息转发到 Logcat（tag=DDNAS-Console），
+                        // 便于诊断 portal 前端在 WebView 内的运行情况（fetch 失败、JS 报错等）。
                         webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
+                                val m = message ?: return true
+                                android.util.Log.i(
+                                    "DDNAS-Console",
+                                    "[${m.messageLevel()}] ${m.message()} @ ${m.sourceId()}:${m.lineNumber()}"
+                                )
+                                return true
+                            }
                             override fun onShowFileChooser(
                                 webView: WebView?,
                                 callback: ValueCallback<Array<Uri>>?,
@@ -205,6 +213,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        webViewClient = WebViewClient()
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
@@ -412,6 +421,13 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun downloadFile(url: String, name: String) {
             runOnUiThread { showDownloadDialog(url, name) }
+        }
+
+        /** 把 portal 前端的诊断信息写入 Logcat（tag=DDNAS-Portal），
+         *  方便排查 WebView 内 fetch 失败、超时等问题。仅 App 端可用。 */
+        @JavascriptInterface
+        fun log(msg: String) {
+            android.util.Log.i("DDNAS-Portal", msg ?: "")
         }
 
         private fun escJSON(s: String): String =

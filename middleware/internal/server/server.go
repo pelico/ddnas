@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -70,6 +71,9 @@ func (s *Server) Reload() {
 	if s.db != nil {
 		mux.HandleFunc("POST /portal/api/backup/history", s.admin.AuthedAPI(s.handleInsertBackupHistory))
 		mux.HandleFunc("GET /portal/api/backup/history", s.admin.AuthedAPI(s.handleListBackupHistory))
+		// 清空全部：DELETE /portal/api/backup/history；单条删：带 {id} 后缀
+		mux.HandleFunc("DELETE /portal/api/backup/history", s.admin.AuthedAPI(s.handleDeleteBackupHistory))
+		mux.HandleFunc("DELETE /portal/api/backup/history/{id}", s.admin.AuthedAPI(s.handleDeleteBackupHistory))
 	}
 
 	// 挂载各启用适配器：同时以 Bearer（/api/*，供外部程序化访问）与
@@ -230,6 +234,38 @@ func (s *Server) handleListBackupHistory(w http.ResponseWriter, r *http.Request)
 		records = []store.BackupRecord{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"records": records})
+}
+
+// DELETE /portal/api/backup/history        — 清空全部备份历史
+// DELETE /portal/api/backup/history/{id}  — 删除单条备份历史
+func (s *Server) handleDeleteBackupHistory(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	// 路径 /portal/api/backup/history/{id}，取末段 id
+	idStr := r.URL.Path
+	if i := strings.LastIndex(idStr, "/"); i >= 0 {
+		idStr = idStr[i+1:]
+	}
+	if idStr != "" && idStr != "history" {
+		id, _ := strconv.ParseInt(idStr, 10, 64)
+		if id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "无效 id"})
+			return
+		}
+		if err := s.db.DeleteBackupRecord(id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	} else {
+		// 清空全部
+		if err := s.db.ClearBackupHistory(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- auth ---
