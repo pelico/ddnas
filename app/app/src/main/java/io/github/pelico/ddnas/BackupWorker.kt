@@ -13,6 +13,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import io.github.pelico.ddnas.data.BackupStore
 import io.github.pelico.ddnas.data.ServerStore
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 /**
@@ -36,10 +37,10 @@ class BackupWorker(
         // 没选目录或没开自动备份 → 跳过
         if (cfg.treeUri.isEmpty() || !cfg.autoBackup) return Result.success()
 
-        // 找活跃服务器
+        // 找活跃服务器（servers/activeIndex 是 Flow，doWork 是 suspend 可直接 .first()）
         val serverStore = ServerStore(ctx)
-        val servers = serverStore.servers
-        val activeIdx = serverStore.activeIndex
+        val servers = serverStore.servers.first()
+        val activeIdx = serverStore.activeIndex.first()
         val active = servers.getOrNull(activeIdx) ?: return Result.success()
 
         val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
