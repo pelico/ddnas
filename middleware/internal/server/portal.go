@@ -158,6 +158,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* 路径字体放大到 15px：手机端单手阅读更舒适；加粗保持视觉层级 */
 .file-top .path{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
 .file-top .up{background:var(--accent);color:#fff;border-radius:12px;padding:9px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px;font-weight:600;min-height:36px}
+.file-top .up:disabled{background:var(--muted2);opacity:.5;cursor:not-allowed}
 /* 面包屑：字体 13px + 可点击块加 padding，手机端点击不费力；保留分隔符与高亮色 */
 .crumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;color:var(--muted);font-size:13px;line-height:1.5;overflow-x:auto;padding:2px 0}
 .crumb a{color:var(--accent);white-space:nowrap;padding:4px 6px;border-radius:6px;-webkit-tap-highlight-color:transparent}
@@ -1081,7 +1082,17 @@ function loadFiles(p){
   const pathEl=document.getElementById("file-path");
   pathEl.textContent="/"+(curFiles||"");
   const upBtn=document.getElementById("up-btn");
-  if(upBtn)upBtn.title="上传到当前目录: /"+(curFiles||"");
+  if(upBtn){
+    // 根目录禁用上传：OpenList 根目录通常是只读挂载（挂的是其他盘的根，无写入空间），
+    // 用户必须先进入子目录才能上传，避免所有文件静默失败。
+    if(curFiles){
+      upBtn.disabled=false;
+      upBtn.title="上传到当前目录: /"+curFiles;
+    }else{
+      upBtn.disabled=true;
+      upBtn.title="根目录不支持上传，请先进入子目录";
+    }
+  }
   renderCrumb(curFiles);
   body.innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
   fetch("/portal/api/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
@@ -1306,7 +1317,9 @@ function downloadFile(relPath,name){
 async function upload(input){
   const files=input.files;if(!files||!files.length)return;
   const dir=curFiles||"";
-  const dirDisp=dir?("/"+dir):"/";
+  // 防御性 guard：按钮虽 disabled，仍拦截绕过（F12 改属性等），根目录直接拒收
+  if(!dir){toast("根目录不支持上传，请先进入子目录",2500);input.value="";return;}
+  const dirDisp="/"+dir;
   let ok=0,fail=0;const total=files.length;
   for(let i=0;i<files.length;i++){
     const f=files[i];
