@@ -225,6 +225,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   font-size:12px;border-radius:8px;padding:7px 10px;border:1px solid var(--bd);
 }
 .bk-btn:active{opacity:.6}
+.bk-btn:disabled{opacity:.4;cursor:not-allowed}
 .bk-row.warn .bk-v{color:var(--warn)}
 /* 自动备份开关 toggle */
 .bk-toggle{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0}
@@ -281,7 +282,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd)}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
 .bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd);word-break:break-all}
-.bk-browse-list{flex:1;overflow:auto;padding:4px 0}
+.bk-browse-list{flex:1;min-height:220px;max-height:60vh;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
 .bk-browse-item{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
 .bk-browse-item:active{background:var(--surface2)}
 .bk-browse-item .ic{font-size:16px;opacity:.8}
@@ -423,8 +424,8 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
         </div>
         <div class="bk-row">
           <div class="bk-k">远程路径</div>
-          <input class="bk-input" id="bk-remote" type="text" placeholder="/手机备份/" />
-          <button class="bk-btn" id="bk-save-remote" onclick="saveRemoteBase()">保存</button>
+          <input class="bk-input" id="bk-remote" type="text" placeholder="/手机备份/" oninput="toggleBkSave()" />
+          <button class="bk-btn" id="bk-save-remote" onclick="saveRemoteBase()" disabled title="根目录不可保存，请进入子目录">保存</button>
           <button class="bk-btn" onclick="browseRemoteDir()">浏览</button>
         </div>
         <div class="bk-row">
@@ -764,6 +765,7 @@ function loadBackupConfig(){
   if(remoteEl && !remoteEl.dataset.touched){
     remoteEl.value=cfg.remoteBase||"/手机备份/";
   }
+  toggleBkSave(); // 回填后刷新保存按钮可用性（根目录禁用）
   if(lastEl)lastEl.textContent=fmtBackupTime(cfg.lastBackupTime);
   // 自动备份开关
   const autoEl=document.getElementById("bk-auto");
@@ -832,12 +834,26 @@ function fmtDurationMs(ms){
   const m=Math.floor(s/60),rs=s%60;
   return m+"m"+(rs>0?rs+"s":"");
 }
+// 根据远程路径输入框值切换"保存"按钮可用性：根目录(/或空)禁用，与上传按钮策略一致
+function toggleBkSave(){
+  const remoteEl=document.getElementById("bk-remote");
+  const saveBtn=document.getElementById("bk-save-remote");
+  if(!remoteEl||!saveBtn)return;
+  const v=remoteEl.value.trim().replace(/^\/+/,"").replace(/\/+$/,"");
+  saveBtn.disabled = v === "";
+  saveBtn.title = v === "" ? "根目录不可保存，请进入子目录" : "";
+}
 function saveRemoteBase(){
   const remoteEl=document.getElementById("bk-remote");
   if(!remoteEl)return;
   remoteEl.dataset.touched="1";
   let base=remoteEl.value.trim();
   if(!base){toast("远程路径不能为空");return;}
+  // 根目录不可保存：openlist 根挂载通常只读，与上传按钮策略一致
+  if(base.replace(/^\/+/,"").replace(/\/+$/,"")===""){
+    toast("根目录不可保存，请进入子目录");
+    return;
+  }
   if(base.charAt(0)!=="/")base="/"+base;
   if(base.charAt(base.length-1)!=="/")base=base+"/";
   remoteEl.value=base;
