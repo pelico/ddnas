@@ -369,7 +369,7 @@ class BackupService : Service() {
         }
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
-        }.put(body).build()
+        }.post(body).build()
         return try {
             client.newCall(req).execute().use { resp ->
                 val ok = resp.isSuccessful
