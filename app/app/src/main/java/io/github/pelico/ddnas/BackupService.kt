@@ -23,7 +23,7 @@ import java.net.URLEncoder
 
 /**
  * 备份前台服务：遍历 SAF 选择的目录树，增量上传到中间件
- * /portal/api/openlist/files/upload?path=<远程相对路径>，携带 admin 会话 cookie。
+ * /portal/api/files/upload?path=<远程相对路径>，携带 admin 会话 cookie。
  *
  * 增量策略：BackupManifest 记录每个文件上次上传的 size+mtime，
  * 未变更的文件跳过，只传新增/修改的文件。
@@ -252,7 +252,7 @@ class BackupService : Service() {
     private fun mkdirRemote(origin: String, cookie: String, remoteBase: String): String? {
         val base = remoteBase.trimEnd('/')
         if (base.isEmpty()) return null  // 根目录跳过
-        val url = origin.trimEnd('/') + "/portal/api/openlist/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
+        val url = origin.trimEnd('/') + "/portal/api/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
         val req = Request.Builder().url(url).apply {
             if (cookie.isNotEmpty()) header("Cookie", cookie)
         }.post(EMPTY_BODY).build()
@@ -282,7 +282,7 @@ class BackupService : Service() {
     }
 
     private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile): Boolean {
-        val url = origin.trimEnd('/') + "/portal/api/openlist/files/upload?path=" + URLEncoder.encode(dest, "UTF-8")
+        val url = origin.trimEnd('/') + "/portal/api/files/upload?path=" + URLEncoder.encode(dest, "UTF-8")
         val length = file.length()
         // 流式 RequestBody：直接读 contentResolver 流，避免整文件入内存。
         val body = object : RequestBody() {
