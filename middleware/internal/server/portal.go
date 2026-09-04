@@ -276,8 +276,8 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-hist-failed .fl-list{white-space:pre-wrap;word-break:break-all;line-height:1.5;max-height:120px;overflow:auto}
 
 /* 远程目录浏览弹层 */
-.bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column}
-.bk-browse-card{background:var(--card);margin:auto 16px;border-radius:14px;max-height:70vh;display:flex;flex-direction:column;overflow:hidden}
+.bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain;-webkit-transform:translateZ(0);transform:translateZ(0)}
+.bk-browse-card{background:var(--card);margin:16px;border-radius:14px;max-height:70vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden}
 .bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd)}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
 .bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd);word-break:break-all}
@@ -522,8 +522,8 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 <div id="toast" class="toast"></div>
 
 <!-- 远程目录浏览模态窗（备份模块内嵌，非 AlertDialog） -->
-<div class="bk-browse" id="bk-browse" style="display:none">
-  <div class="bk-browse-card">
+<div class="bk-browse" id="bk-browse" style="display:none" onclick="closeBrowse()">
+  <div class="bk-browse-card" onclick="event.stopPropagation()">
     <div class="bk-browse-head">
       <button class="bk-btn" onclick="browseUp()">上级</button>
       <div class="bk-browse-title">选择远程目录</div>
