@@ -286,17 +286,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 /* 远程目录浏览弹层 */
 .bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain;-webkit-transform:translateZ(0);transform:translateZ(0)}
-.bk-browse-card{background:var(--card);margin:16px;border-radius:14px;max-height:70vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden}
-.bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd)}
+.bk-browse-card{background:var(--card,#fff);margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;height:80vh;max-height:80vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+.bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
-.bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd);word-break:break-all}
-.bk-browse-list{flex:1;min-height:220px;max-height:60vh;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
+.bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));word-break:break-all;flex-shrink:0}
+.bk-browse-list{flex:1;min-height:200px;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
 .bk-browse-item{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
 .bk-browse-item:active{background:var(--surface2)}
 .bk-browse-item .ic{font-size:16px;opacity:.8}
 .bk-browse-item .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bk-browse-empty{padding:24px;text-align:center;color:var(--muted);font-size:13px}
-.bk-browse-foot{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--bd)}
+.bk-browse-foot{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-foot .bk-btn{flex:1;padding:9px 0;text-align:center;font-size:13px;font-weight:600}
 
 /* ===== 底部三栏导航 ===== */
@@ -1177,6 +1177,19 @@ function browseRemoteDir(){
   let init="";
   if(remoteEl){init=remoteEl.value.trim().replace(/^\/+/,"").replace(/\/+$/,"");}
   root.style.display="flex";
+  // 诊断：WebView 内 card 实际渲染尺寸/位置，从 Logcat 看（tag DDNAS-Portal）
+  // 若 width/height=0 说明 flex 计算失败，card 被压扁
+  try{
+    setTimeout(()=>{
+      const card=document.querySelector(".bk-browse-card");
+      if(card){
+        const r=card.getBoundingClientRect();
+        const cs=getComputedStyle(card);
+        const log="browse-card rect: w="+Math.round(r.width)+" h="+Math.round(r.height)+" top="+Math.round(r.top)+" left="+Math.round(r.left)+" bg="+cs.background+" disp="+cs.display+" vis="+cs.visibility+" flex="+cs.flexDirection;
+        try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log(log);else console.log("[browse-diag] "+log);}catch(e){console.log("[browse-diag-err] "+log);}
+      }
+    },50);
+  }catch(e){}
   browseLoad(init);
 }
 function closeBrowse(){
