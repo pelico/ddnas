@@ -22,7 +22,17 @@ class DdnasApplication : Application() {
 
     /** 供 ExoPlayer 与备份服务复用。各调用方按需加 cookie 拦截器。 */
     val okHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder().build()
+        // 用 WebView 真实 UA：Cloudflare Tunnel 的 Bot Fight Mode / WAF 会拦截
+        // okhttp/4.x 这类非浏览器 UA，返回挑战页 HTML（<!doctype html>...），
+        // 导致备份的 mkdir/upload 原生请求失败（WebView 的 fetch 用浏览器 UA
+        // 正常穿透，所以前端验证成功但点备份报错）。换浏览器 UA 后原生请求
+        // 与 WebView 在 CF 侧视为同一类客户端，可一起穿透。
+        val ua = android.webkit.WebSettings.getDefaultUserAgent(this)
+        OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                chain.proceed(chain.request().newBuilder().header("User-Agent", ua).build())
+            }
+            .build()
     }
 
     override fun onCreate() {
