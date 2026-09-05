@@ -1219,25 +1219,9 @@ function browseRemoteDir(){
   const root=document.getElementById("bk-browse");
   const listEl=document.getElementById("bk-browse-list");
   if(!root||!listEl)return;
-  // 初始路径：取当前远程路径输入框的值，去掉首尾 "/"
-  const remoteEl=document.getElementById("bk-remote");
-  let init="";
-  if(remoteEl){init=remoteEl.value.trim().replace(/^\/+/,"").replace(/\/+$/,"");}
+  // 每次点"浏览"都从根目录开始，用户逐级进入子目录后点"选择此目录"确认
   root.style.display="flex";
-  // 诊断：WebView 内 card 实际渲染尺寸/位置，从 Logcat 看（tag DDNAS-Portal）
-  // 若 width/height=0 说明 flex 计算失败，card 被压扁
-  try{
-    setTimeout(()=>{
-      const card=document.querySelector(".bk-browse-card");
-      if(card){
-        const r=card.getBoundingClientRect();
-        const cs=getComputedStyle(card);
-        const log="browse-card rect: w="+Math.round(r.width)+" h="+Math.round(r.height)+" top="+Math.round(r.top)+" left="+Math.round(r.left)+" bg="+cs.background+" disp="+cs.display+" vis="+cs.visibility+" flex="+cs.flexDirection;
-        try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log(log);else console.log("[browse-diag] "+log);}catch(e){console.log("[browse-diag-err] "+log);}
-      }
-    },50);
-  }catch(e){}
-  browseLoad(init);
+  browseLoad("");
 }
 function closeBrowse(){
   const root=document.getElementById("bk-browse");
