@@ -50,6 +50,7 @@ class DdnasApplication : Application() {
         super.onCreate()
         instance = this
         createBackupChannel()
+        createMusicChannel()
     }
 
     private fun createBackupChannel() {
@@ -61,8 +62,21 @@ class DdnasApplication : Application() {
         }
     }
 
+    private fun createMusicChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                CHANNEL_MUSIC, "音乐播放", NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "后台音乐播放控制"
+                setShowBadge(false)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        }
+    }
+
     companion object {
         const val CHANNEL_BACKUP = "ddnas_backup"
+        const val CHANNEL_MUSIC = "ddnas_music"
         lateinit var instance: DdnasApplication
             private set
     }

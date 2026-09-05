@@ -299,6 +299,27 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-browse-foot{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-foot .bk-btn{flex:1;padding:9px 0;text-align:center;font-size:13px;font-weight:600}
 
+/* ===== 迷你音乐播放器（底部固定条） ===== */
+.music-player{position:fixed;left:0;right:0;bottom:50px;z-index:30;background:var(--card);border-top:1px solid var(--bd);padding:8px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 -2px 12px rgba(0,0,0,.1)}
+.music-player .m-info{flex:1;min-width:0}
+.music-player .m-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.music-player .m-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.music-player .m-bar{display:flex;align-items:center;gap:8px;flex:2;min-width:120px}
+.music-player .m-bar input[type=range]{flex:1;height:4px;accent-color:var(--accent)}
+.music-player .m-time{font-size:10px;color:var(--muted);min-width:36px;text-align:center}
+.music-player .m-ctrls{display:flex;align-items:center;gap:6px}
+.music-player .m-btn{width:32px;height:32px;border-radius:50%;border:none;background:var(--surface2);cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center}
+.music-player .m-btn.play{background:var(--accent);color:#fff}
+.music-player .m-btn:active{opacity:.7}
+.music-player .m-close{margin-left:4px;font-size:16px;color:var(--muted);cursor:pointer;background:none;border:none;padding:4px}
+.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:29;background:var(--card);border-top:1px solid var(--bd);max-height:40vh;overflow:auto;padding:6px 0;display:none}
+.music-list.show{display:block}
+.music-list .mi{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:13px;cursor:pointer}
+.music-list .mi.cur{background:var(--surface2);color:var(--accent);font-weight:600}
+.music-list .mi:active{background:var(--surface2)}
+.music-list .mi .mi-ic{font-size:14px;opacity:.7}
+.music-list .mi .mi-nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 /* ===== 底部三栏导航 ===== */
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
@@ -530,6 +551,25 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
+
+<!-- 迷你音乐播放器（底部固定条，非全屏） -->
+<div class="music-player" id="music-player" style="display:none">
+  <div class="m-info">
+    <div class="m-title" id="m-title">—</div>
+    <div class="m-meta" id="m-meta">00:00 / 00:00</div>
+  </div>
+  <div class="m-bar">
+    <input type="range" id="m-seek" min="0" max="100" value="0" step="1" oninput="musicSeek(this.value)">
+  </div>
+  <div class="m-ctrls">
+    <button class="m-btn" onclick="musicPrev()" title="上一首">⏮</button>
+    <button class="m-btn play" id="m-playbtn" onclick="musicToggle()" title="播放/暂停">▶</button>
+    <button class="m-btn" onclick="musicNext()" title="下一首">⏭</button>
+    <button class="m-btn" onclick="musicToggleList()" title="播放列表">≡</button>
+  </div>
+  <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
+</div>
+<div class="music-list" id="music-list"></div>
 
 <div id="toast" class="toast"></div>
 
@@ -1363,6 +1403,7 @@ function renderMonitor(s){
 
 /* ========= 文件浏览 ========= */
 let curFiles="";
+let curItems=[];  // 当前目录的文件项（供音乐播放器筛选同目录音频）
 let filesLoadedEver=false;
 function loadFiles(p){
   curFiles=p||"";filesLoadedEver=true;
@@ -1391,6 +1432,7 @@ function loadFiles(p){
       const db=b.is_dir||b.type==="folder"||(b.is_dir==null&&String(b.name||"").lastIndexOf(".")<0)?1:0;
       if(da!==db)return db-da;return String(a.name||"").localeCompare(String(b.name||""));
     });
+    curItems=items;  // 存当前目录文件项，供音乐播放器生成同目录播放列表
     if(!items.length){body.innerHTML='<div class="empty">空目录</div>';return;}
     body.innerHTML='<div class="flist">'+items.map(function(it){
       const name=esc(it.name||"");
@@ -1464,6 +1506,8 @@ function renderCrumb(p){
 }
 function play(relPath){
   if(!relPath)return;
+  // 音频走迷你音乐播放器（同目录播放列表 + 后台播放）；视频走原全屏播放器
+  if(mediaExt(relPath)==="audio"){playAudio(relPath);return;}
   // 逐段 encodeURIComponent，保留 "/" 分隔，Go {path...} 会正确捕获多段
   const url=location.origin+"/portal/api/files/stream/"+relPath.split("/").map(encodeURIComponent).join("/");
   const name=relPath.split("/").pop()||"播放";
@@ -1474,6 +1518,140 @@ function play(relPath){
   // 浏览器环境或桥不可用：HTML5 video 标签直接播放（浏览器支持的格式直接放）
   openVideoPlayer(url,name);
 }
+
+/* ========= 迷你音乐播放器 ========= */
+let musicPlaylist=[];     // [{name,url,rel}]
+let musicIndex=0;
+let musicAudio=null;      // 浏览器环境用 HTML5 audio
+let musicPlaying=false;
+let musicLoopMode="list"; // list=列表循环 / one=单曲循环 / order=顺序播完停
+
+// stream URL 构造：逐段 encode，保留 "/"
+function streamUrl(rel){return location.origin+"/portal/api/files/stream/"+rel.split("/").map(encodeURIComponent).join("/");}
+
+// 音频点击入口：从当前目录筛出所有音频，组成播放列表
+function playAudio(relPath){
+  if(!relPath)return;
+  // 从当前目录文件项中筛选音频（按文件名排序，与列表展示一致）
+  const audios=curItems.filter(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio")
+    .map(it=>({name:it.name,rel:joinPath(curFiles,it.name),url:streamUrl(joinPath(curFiles,it.name))}));
+  if(!audios.length){toast("当前目录没有音频文件");return;}
+  const idx=Math.max(0,audios.findIndex(a=>a.rel===relPath));
+  startMusic(idx,audios);
+}
+
+// 启动播放：App 桥优先（后台播放），否则 HTML5 audio
+function startMusic(idx,list){
+  musicPlaylist=list;musicIndex=idx;
+  const item=list[idx];
+  document.getElementById("music-player").style.display="flex";
+  document.getElementById("m-title").textContent=item.name;
+  renderMusicList();
+  // App 原生桥：交给 MusicService 后台播放
+  if(typeof ddnas!=="undefined"&&typeof ddnas.playMusic==="function"){
+    try{
+      const pl=JSON.stringify(list.map(a=>({name:a.name,url:a.url})));
+      ddnas.playMusic(idx,pl);
+      musicPlaying=true;
+      updateMusicBtn();
+      return;
+    }catch(e){}
+  }
+  // 浏览器：HTML5 audio
+  if(!musicAudio){
+    musicAudio=new Audio();
+    musicAudio.addEventListener("ended",()=>{musicOnEnded();});
+    musicAudio.addEventListener("timeupdate",()=>{updateMusicProgress();});
+    musicAudio.addEventListener("loadedmetadata",()=>{updateMusicProgress();});
+    musicAudio.addEventListener("error",()=>{toast("播放失败："+(musicAudio.error?.message||"未知"));musicNext();});
+  }
+  musicAudio.src=item.url;
+  musicAudio.play().then(()=>{musicPlaying=true;updateMusicBtn();}).catch(e=>{
+    toast("播放失败："+(e.message||e));musicPlaying=false;updateMusicBtn();
+  });
+}
+
+function musicToggle(){
+  if(typeof ddnas!=="undefined"&&typeof ddnas.musicControl==="function"){
+    try{ddnas.musicControl(musicPlaying?"pause":"play");return;}catch(e){}
+  }
+  if(!musicAudio)return;
+  if(musicPlaying){musicAudio.pause();musicPlaying=false;}else{musicAudio.play().then(()=>{musicPlaying=true;}).catch(()=>{});}
+  updateMusicBtn();
+}
+function musicPrev(){
+  if(musicPlaylist.length<=1)return;
+  musicIndex=(musicIndex-1+musicPlaylist.length)%musicPlaylist.length;
+  playCurrent();
+}
+function musicNext(){
+  if(musicPlaylist.length<=1)return;
+  musicIndex=(musicIndex+1)%musicPlaylist.length;
+  playCurrent();
+}
+function playCurrent(){
+  const item=musicPlaylist[musicIndex];
+  document.getElementById("m-title").textContent=item.name;
+  renderMusicList();
+  if(typeof ddnas!=="undefined"&&typeof ddnas.musicPlayAt==="function"){
+    try{ddnas.musicPlayAt(musicIndex);return;}catch(e){}
+  }
+  if(musicAudio){musicAudio.src=item.url;musicAudio.play().then(()=>{musicPlaying=true;updateMusicBtn();}).catch(()=>{});}
+}
+function musicOnEnded(){
+  if(musicLoopMode==="one"){if(musicAudio){musicAudio.currentTime=0;musicAudio.play();}return;}
+  if(musicLoopMode==="list"){musicNext();return;}
+  // order：播到最后一首停
+  if(musicIndex<musicPlaylist.length-1){musicNext();}else{musicPlaying=false;updateMusicBtn();}
+}
+function musicSeek(percent){
+  if(typeof ddnas!=="undefined"&&typeof ddnas.musicSeek==="function"){
+    try{ddnas.musicSeek(percent);return;}catch(e){}  // 原生端按百分比换算 position
+  }
+  if(musicAudio&&musicAudio.duration){musicAudio.currentTime=percent/100*musicAudio.duration;}
+}
+function updateMusicProgress(){
+  if(!musicAudio||!musicAudio.duration)return;
+  const cur=musicAudio.currentTime||0,dur=musicAudio.duration;
+  document.getElementById("m-seek").value=Math.round(cur/dur*100);
+  document.getElementById("m-meta").textContent=fmtTime(cur)+" / "+fmtTime(dur);
+}
+function updateMusicBtn(){document.getElementById("m-playbtn").textContent=musicPlaying?"⏸":"▶";}
+function renderMusicList(){
+  const el=document.getElementById("music-list");
+  el.innerHTML=musicPlaylist.map((a,i)=>
+    '<div class="mi '+(i===musicIndex?"cur":"")+'" onclick="musicPlayAt('+i+')">'+
+    '<span class="mi-ic">'+(i===musicIndex?"🎵":"♪")+'</span><span class="mi-nm">'+esc(a.name)+'</span></div>'
+  ).join("");
+}
+function musicPlayAt(i){musicIndex=i;playCurrent();}
+function musicToggleList(){document.getElementById("music-list").classList.toggle("show");}
+function musicClose(){
+  if(typeof ddnas!=="undefined"&&typeof ddnas.musicControl==="function"){try{ddnas.musicControl("stop");}catch(e){}}
+  if(musicAudio){musicAudio.pause();musicAudio.src="";}
+  musicPlaying=false;musicPlaylist=[];musicIndex=0;
+  document.getElementById("music-player").style.display="none";
+  document.getElementById("music-list").classList.remove("show");
+}
+function fmtTime(s){s=Math.floor(s||0);const m=Math.floor(s/60),ss=s%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss;}
+
+// App 端 MusicService 状态回调（由原生 evaluateJavascript 调用）
+function onMusicStateChange(json){
+  try{
+    const s=JSON.parse(json||"{}");
+    if(typeof s.playing==="boolean"){musicPlaying=s.playing;updateMusicBtn();}
+    if(typeof s.index==="number"&&s.index!==musicIndex){
+      musicIndex=s.index;
+      const item=musicPlaylist[musicIndex];
+      if(item){document.getElementById("m-title").textContent=item.name;renderMusicList();}
+    }
+    if(typeof s.position==="number"&&typeof s.duration==="number"&&s.duration>0){
+      document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
+      document.getElementById("m-meta").textContent=fmtTime(s.position/1000)+" / "+fmtTime(s.duration/1000);
+    }
+  }catch(e){}
+}
+
 function openVideoPlayer(url,title){
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column";
@@ -1641,7 +1819,8 @@ async function upload(input){
 // 在 adapter handler 内以容器 HTTP Client 调用，客户端永不触及内网。
 func (s *Server) servePortal(w http.ResponseWriter, r *http.Request) {
 	if !s.admin.LoggedIn(r) {
-		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		// 带 redirect，登录后直接回 /portal，不再落到 /admin/ 总览页
+		http.Redirect(w, r, "/admin/login?redirect=/portal", http.StatusFound)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

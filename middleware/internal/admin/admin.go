@@ -139,7 +139,7 @@ func (a *Admin) handleSetup(w http.ResponseWriter, r *http.Request) {
 		a.reload()
 	}
 	a.setSession(w)
-	http.Redirect(w, r, "/admin/", http.StatusFound)
+	http.Redirect(w, r, redirectTarget(r, "/portal"), http.StatusFound)
 }
 
 // --- login ---
@@ -161,7 +161,9 @@ func (a *Admin) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w)
-	http.Redirect(w, r, "/admin/", http.StatusFound)
+	// 登录成功默认进功能页 /portal（App 套壳首页）；
+	// 若带 ?redirect= 且为本站内合法相对路径，则回跳原请求页。
+	http.Redirect(w, r, redirectTarget(r, "/portal"), http.StatusFound)
 }
 
 func (a *Admin) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +306,21 @@ func buildFields(ad plugin.Adapter, raw map[string]any) []adapterField {
 }
 
 // --- connection ---
+
+// redirectTarget 从 query 取 ?redirect= 作为登录/设置后的回跳地址。
+// 仅接受本站内相对路径（以单个 "/" 开头，不含协议/主机/反斜杠，防开放重定向）。
+// 非法或缺省时返回 def。
+func redirectTarget(r *http.Request, def string) string {
+	rt := strings.TrimSpace(r.URL.Query().Get("redirect"))
+	if rt == "" || !strings.HasPrefix(rt, "/") || strings.HasPrefix(rt, "//") {
+		return def
+	}
+	// 拒绝包含协议、反斜杠、控制字符等危险字符
+	if strings.ContainsAny(rt, "\\\r\n\t") || strings.Contains(rt, "http:") || strings.Contains(rt, "https:") {
+		return def
+	}
+	return rt
+}
 
 func (a *Admin) handleConnection(w http.ResponseWriter, r *http.Request) {
 	if !a.store.Configured() || !a.loggedIn(r) {

@@ -430,6 +430,66 @@ class MainActivity : ComponentActivity() {
             android.util.Log.i("DDNAS-Portal", msg ?: "")
         }
 
+        // ---------- 音乐播放器桥 ----------
+
+        /** 启动音乐播放：index=起始索引，playlistJson=JSON 数组 [{name,url}]。
+         *  交给 MusicService 后台播放（息屏不断）。 */
+        @JavascriptInterface
+        fun playMusic(index: Int, playlistJson: String) {
+            val active = currentServer() ?: return
+            val origin = active.url.trimEnd('/')
+            val cookie = CookieManager.getInstance().getCookie(origin) ?: ""
+            val tracks = try {
+                val arr = org.json.JSONArray(playlistJson)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    MusicService.Track(o.getString("name"), o.getString("url"))
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DDNAS-Music", "parse playlist json fail", e)
+                return
+            }
+            // 设置状态回调：Service 状态变化时通知 WebView 更新 UI
+            MusicService.stateCallback = { json ->
+                runOnUiThread {
+                    try {
+                        portalWebView?.evaluateJavascript("onMusicStateChange('${json.replace("'", "\\'")}')", null)
+                    } catch (e: Exception) {}
+                }
+            }
+            MusicService.play(this@MainActivity, index, tracks, origin, cookie)
+        }
+
+        /** 播放控制：play / pause / next / prev / stop */
+        @JavascriptInterface
+        fun musicControl(action: String) {
+            val svc = MusicService.instance ?: return
+            when (action) {
+                "play" -> svc.resumePlayer()
+                "pause" -> svc.pausePlayer()
+                "next" -> svc.nextTrack()
+                "prev" -> svc.prevTrack()
+                "stop" -> svc.stopMusic()
+            }
+        }
+
+        /** 播放列表中指定索引的歌曲。 */
+        @JavascriptInterface
+        fun musicPlayAt(index: Int) {
+            MusicService.instance?.playAt(index)
+        }
+
+        /** 拖动进度：percent 0~100，Service 内按 duration 换算 position。 */
+        @JavascriptInterface
+        fun musicSeek(percent: Int) {
+            MusicService.instance?.seekToPercent(percent)
+        }
+
+        /** 返回当前播放状态 JSON：{playing,index,position,duration}。 */
+        @JavascriptInterface
+        fun getMusicState(): String = MusicService.instance?.getStateJson()
+            ?: """{"playing":false,"index":0,"position":0,"duration":0}"""
+
         private fun escJSON(s: String): String =
             s.replace("\\", "\\\\").replace("\"", "\\\"")
                 .replace("\n", "\\n").replace("\r", "\\r")

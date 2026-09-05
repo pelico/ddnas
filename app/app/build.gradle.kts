@@ -97,6 +97,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.3.1")
+    // MediaSessionCompat + NotificationCompat.MediaStyle（音乐前台通知/锁屏控制）
+    implementation("androidx.media:media:1.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
