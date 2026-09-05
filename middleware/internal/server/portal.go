@@ -319,7 +319,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .music-player .m-btn.play{background:var(--accent);color:#fff}
 .music-player .m-btn:active{opacity:.7}
 .music-player .m-close{margin-left:4px;font-size:16px;color:var(--muted);cursor:pointer;background:none;border:none;padding:4px}
-.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:29;background:var(--card);border-top:1px solid var(--bd);max-height:40vh;overflow:auto;padding:6px 0;display:none}
+.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:40;background:var(--card);border-top:1px solid var(--bd);max-height:40vh;overflow:auto;padding:6px 0;display:none;box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .music-list.show{display:block}
 .music-list .mi{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:13px;cursor:pointer}
 .music-list .mi.cur{background:var(--surface2);color:var(--accent);font-weight:600}
@@ -566,7 +566,10 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <div class="m-meta" id="m-meta">00:00 / 00:00</div>
   </div>
   <div class="m-bar">
-    <input type="range" id="m-seek" min="0" max="100" value="0" step="1" oninput="musicSeek(this.value)">
+    <input type="range" id="m-seek" min="0" max="100" value="0" step="1"
+      onmousedown="musicSeeking=true" ontouchstart="musicSeeking=true"
+      oninput="musicSeek(+this.value)"
+      onchange="musicSeeking=false" onmouseup="musicSeeking=false" ontouchend="musicSeeking=false">
   </div>
   <div class="m-ctrls">
     <button class="m-btn" onclick="musicPrev()" title="上一首">⏮</button>
@@ -1520,6 +1523,7 @@ function play(relPath){
 
 /* ========= 迷你音乐播放器 ========= */
 let musicPlaylist=[];     // [{name,url,rel}]
+let musicSeeking=false;   // 拖动进度条时为 true；期间禁止状态回调回写 m-seek.value，避免拖动被"弹回"
 let musicIndex=0;
 let musicAudio=null;      // 浏览器环境用 HTML5 audio
 let musicPlaying=false;
@@ -1612,7 +1616,7 @@ function musicSeek(percent){
 function updateMusicProgress(){
   if(!musicAudio||!musicAudio.duration)return;
   const cur=musicAudio.currentTime||0,dur=musicAudio.duration;
-  document.getElementById("m-seek").value=Math.round(cur/dur*100);
+  if(!musicSeeking) document.getElementById("m-seek").value=Math.round(cur/dur*100);
   document.getElementById("m-meta").textContent=fmtTime(cur)+" / "+fmtTime(dur);
 }
 function updateMusicBtn(){document.getElementById("m-playbtn").textContent=musicPlaying?"⏸":"▶";}
@@ -1624,7 +1628,13 @@ function renderMusicList(){
   ).join("");
 }
 function musicPlayAt(i){musicIndex=i;playCurrent();}
-function musicToggleList(){document.getElementById("music-list").classList.toggle("show");}
+function musicToggleList(){
+  const el=document.getElementById("music-list");
+  if(!el)return;
+  // 即将展开时先重新渲染列表，防止某次状态切换漏掉渲染导致列表为空
+  if(!el.classList.contains("show")) renderMusicList();
+  el.classList.toggle("show");
+}
 function musicClose(){
   if(typeof ddnas!=="undefined"&&typeof ddnas.musicControl==="function"){try{ddnas.musicControl("stop");}catch(e){}}
   if(musicAudio){musicAudio.pause();musicAudio.src="";}
@@ -1645,7 +1655,8 @@ function onMusicStateChange(json){
       if(item){document.getElementById("m-title").textContent=item.name;renderMusicList();}
     }
     if(typeof s.position==="number"&&typeof s.duration==="number"&&s.duration>0){
-      document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
+      // 拖动中不回写进度条，否则会把用户正在拖的滑块弹回当前位置
+      if(!musicSeeking) document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
       document.getElementById("m-meta").textContent=fmtTime(s.position/1000)+" / "+fmtTime(s.duration/1000);
     }
   }catch(e){}
