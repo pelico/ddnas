@@ -8,18 +8,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.documentfile.provider.DocumentFile
-import io.github.pelico.ddnas.data.BackupManifest
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
-import java.io.InputStream
-import java.net.URLEncoder
 
 /**
  * 备份前台服务：遍历 SAF 选择的目录树，增量上传到中间件
@@ -56,340 +48,32 @@ class BackupService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * 前台备份入口：创建 [BackupEngine] 执行上传（this 为系统挂载的合法 Context）。
+     * 上传期间订阅进度刷新前台通知，结束后 stopSelf。
+     */
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
-        val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
-        val startTime = System.currentTimeMillis()
-        val failedFiles = mutableListOf<String>()
+        val engine = BackupEngine(this, client)
+        // 订阅共享进度流，刷新前台通知进度条
+        val notifJob = app.appScope.launch {
+            BackupService.progress.collect { p ->
+                if (p is BackupService.Progress.Running) {
+                    startForegroundCompat(NOTIF_ID, buildNotification("备份中", p.done, p.total))
+                }
+            }
+        }
         try {
-            // 持久化 SAF 权限，避免重启后失效
-            try {
-                contentResolver.takePersistableUriPermission(
-                    treeUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) { }
-
-            val root = DocumentFile.fromTreeUri(this, treeUri) ?: run {
-                _progress.value = Progress.Error("无法访问所选目录"); return
+            val result = engine.runBackup(treeUri, origin, cookie, remoteBase, reportHistory = true)
+            // 手动备份成功也写入上次备份时间，与自动备份保持一致
+            if (result is BackupEngine.Result.Success) {
+                try { io.github.pelico.ddnas.data.BackupStore(this).setLastBackupTime(System.currentTimeMillis()) } catch (_: Exception) {}
             }
-            if (!root.isDirectory) {
-                _progress.value = Progress.Error("所选路径不是目录"); return
-            }
-
-            _progress.value = Progress.Scanning
-            val all = ArrayList<Pair<DocumentFile, String>>()
-            collect(root, "", all)
-
-            // 增量过滤：只保留需要上传的文件
-            val toUpload = ArrayList<Pair<DocumentFile, String>>()
-            var skipped = 0
-            for ((file, rel) in all) {
-                val size = file.length()
-                val mtime = file.lastModified()
-                if (manifest.needUpload(rel, size, mtime)) {
-                    toUpload.add(file to rel)
-                } else {
-                    skipped++
-                }
-            }
-
-            val total = toUpload.size
-            if (total == 0) {
-                _progress.value = Progress.Done("无需备份（$skipped 个文件未变更）")
-                return
-            }
-
-            // 备份前确保远程根目录存在且可写，避免所有文件静默失败
-            val mErr = mkdirRemote(origin, cookie, remoteBase)
-            if (mErr != null) {
-                _progress.value = Progress.Error(mErr)
-                return
-            }
-
-            _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
-            var done = 0
-            var failed = 0
-            // 已创建的远程子目录缓存：根目录已 mkdir 过，加入避免重复；
-            // ensureRemoteDirs 会把所有中间层也加进来，避免重复请求
-            val mkdirCache = mutableSetOf(remoteBase.trimEnd('/'))
-            for ((file, rel) in toUpload) {
-                // 用户点"取消备份"后，等当前文件传完即退出循环
-                if (cancelled) {
-                    _progress.value = Progress.Done("已取消（已传 $done 个文件）")
-                    return
-                }
-                val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                // 递归建父目录链：OpenList/AList mkdir 不递归建父目录，
-                // 父链中间层缺失会导致建子目录"假成功"或失败，从而所有上传失败。
-                // 例：/7WKYSSD/手机备份/DCIM/2024/IMG.jpg
-                //     会依次建 /7WKYSSD/手机备份/DCIM、/7WKYSSD/手机备份/DCIM/2024
-                val parent = dest.substringBeforeLast('/').trimEnd('/')
-                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
-                    val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
-                    if (pErr != null) {
-                        // 父目录创建失败，此文件直接记失败，不重试上传
-                        failed++; failedFiles.add(rel); done++
-                        _progress.value = Progress.Running(done, total, "目录创建失败: $pErr")
-                        continue
-                    }
-                }
-                // 单文件最多重试 3 次，指数退避：1s → 2s → 4s
-                var ok = false
-                for (attempt in 0..2) {
-                    if (cancelled) break
-                    ok = try {
-                        uploadFile(origin, cookie, dest, file, done, total)
-                    } catch (e: Exception) {
-                        Log_w("upload attempt ${attempt + 1} fail: $rel", e); false
-                    }
-                    if (ok) break
-                    if (attempt < 2) {
-                        val backoff = (1000L shl attempt) // 1s, 2s
-                        _progress.value = Progress.Running(done, total, "重试(${attempt + 1}/3) ${file.name ?: rel}")
-                        try { kotlinx.coroutines.delay(backoff) } catch (_: Exception) { break }
-                    }
-                }
-                if (ok) {
-                    manifest.markUploaded(rel, file.length(), file.lastModified())
-                } else {
-                    failed++
-                    failedFiles.add(rel)
-                }
-                done++
-                _progress.value = Progress.Running(done, total, file.name ?: rel)
-                startForegroundCompat(NOTIF_ID, buildNotification("备份中", done, total))
-            }
-            val msg = buildString {
-                append("备份完成：上传 $done 个文件")
-                if (skipped > 0) append("，跳过 $skipped 个未变更")
-                if (failed > 0) append("，失败 $failed 个")
-            }
-            // 上报备份历史到中间件 SQLite
-            reportHistory(origin, cookie, startTime, total, done - failed, failed, failedFiles, treeUri.toString(), remoteBase)
-            // 全部失败时报 Error，避免用户误以为备份成功
-            if (failed == total) {
-                _progress.value = Progress.Error("全部 $failed 个文件上传失败（请检查 OpenList 挂载与写入权限）")
-            } else {
-                _progress.value = Progress.Done(msg)
-            }
-        } catch (e: Exception) {
-            _progress.value = Progress.Error(e.message ?: "备份失败")
         } finally {
+            notifJob.cancel()
             running = false
             cancelled = false
             stopSelf()
         }
-    }
-
-    /**
-     * 供 [BackupWorker] 调用的入口，复用 [runBackup] 的核心逻辑。
-     * 不涉及 Service 生命周期（无 stopSelf / startForeground），
-     * 进度通过 [progress] StateFlow 暴露给 UI。
-     */
-    suspend fun runBackupForWorker(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
-        running = true
-        cancelled = false
-        try {
-            val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
-            val root = DocumentFile.fromTreeUri(this, treeUri) ?: return
-            if (!root.isDirectory) return
-            _progress.value = Progress.Scanning
-            val all = ArrayList<Pair<DocumentFile, String>>()
-            collect(root, "", all)
-            val toUpload = ArrayList<Pair<DocumentFile, String>>()
-            var skipped = 0
-            for ((file, rel) in all) {
-                if (!manifest.needUpload(rel, file.length(), file.lastModified())) { skipped++; continue }
-                toUpload.add(file to rel)
-            }
-            val total = toUpload.size
-            if (total == 0) { _progress.value = Progress.Done("无需备份"); return }
-            val mErr = mkdirRemote(origin, cookie, remoteBase)
-            if (mErr != null) { _progress.value = Progress.Error(mErr); return }
-            _progress.value = Progress.Running(0, total, toUpload.first().first.name ?: "")
-            var done = 0; var failed = 0
-            // 已创建的远程子目录缓存：根目录已 mkdir 过，加入避免重复
-            val mkdirCache = mutableSetOf(remoteBase.trimEnd('/'))
-            for ((file, rel) in toUpload) {
-                if (cancelled) break
-                val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
-                // 递归建父目录链，详见 runBackup
-                val parent = dest.substringBeforeLast('/').trimEnd('/')
-                if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
-                    val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
-                    if (pErr != null) { failed++; done++; _progress.value = Progress.Running(done, total, "目录创建失败: $pErr"); continue }
-                }
-                var ok = false
-                for (attempt in 0..2) {
-                    if (cancelled) break
-                    ok = try { uploadFile(origin, cookie, dest, file, done, total) } catch (e: Exception) { Log_w("worker upload fail: $rel", e); false }
-                    if (ok) break
-                    if (attempt < 2) try { kotlinx.coroutines.delay(1000L shl attempt) } catch (_: Exception) { break }
-                }
-                if (ok) manifest.markUploaded(rel, file.length(), file.lastModified()) else failed++
-                done++
-                _progress.value = Progress.Running(done, total, file.name ?: rel)
-            }
-            if (failed == total) { _progress.value = Progress.Error("全部 $failed 个文件上传失败") }
-            else { _progress.value = Progress.Done("备份完成：上传 $done 个${if (failed > 0) "，失败 $failed 个" else ""}") }
-        } catch (e: Exception) {
-            _progress.value = Progress.Error(e.message ?: "备份失败")
-        } finally {
-            running = false
-            cancelled = false
-        }
-    }
-
-    private fun collect(dir: DocumentFile, prefix: String, out: MutableList<Pair<DocumentFile, String>>) {
-        for (child in dir.listFiles()) {
-            val name = child.name ?: continue
-            val rel = if (prefix.isEmpty()) name else "$prefix/$name"
-            if (child.isDirectory) collect(child, rel, out)
-            else if (child.isFile) out.add(child to rel)
-        }
-    }
-
-    /** 备份完成后上报历史到中间件 SQLite，供 portal 查看历史与失败文件列表。 */
-    private fun reportHistory(
-        origin: String, cookie: String, startTime: Long,
-        total: Int, success: Int, failed: Int, failedFiles: List<String>,
-        treeUri: String, remoteBase: String
-    ) {
-        try {
-            val duration = System.currentTimeMillis() - startTime
-            // 构造 JSON：{"ts":now,"duration_ms":dur,"total":N,"success":N,"failed":N,"failed_list":["a","b"],"tree_hash":"...","remote_base":"/.../"}
-            val fl = failedFiles.joinToString(",") { "\"${it.replace("\"", "\\\"")}\"" }
-            val treeHash = treeUri.hashCode().toString(16)
-            val json = """{"ts":${System.currentTimeMillis()},"duration_ms":$duration,"total":$total,"success":$success,"failed":$failed,"failed_list":[$fl],"tree_hash":"$treeHash","remote_base":"$remoteBase"}"""
-            val req = Request.Builder()
-                .url(origin.trimEnd('/') + "/portal/api/backup/history")
-                .apply { if (cookie.isNotEmpty()) header("Cookie", cookie) }
-                .post(RequestBody.create("application/json; charset=utf-8".toMediaType(), json))
-                .build()
-            client.newCall(req).execute().use { it.body?.string() }
-        } catch (e: Exception) {
-            Log_w("reportHistory fail", e)
-        }
-    }
-
-    /** 调用中间件 mkdir 接口确保远程目录存在且可写。
-     *  返回 null 表示可用；返回非空字符串表示失败原因（带 HTTP code/上游错误，便于排查）。 */
-    private fun mkdirRemote(origin: String, cookie: String, remoteBase: String): String? {
-        val base = remoteBase.trimEnd('/')
-        if (base.isEmpty()) return null  // 根目录跳过
-        val url = origin.trimEnd('/') + "/portal/api/files/mkdir?path=" + URLEncoder.encode(base, "UTF-8")
-        android.util.Log.i("DDNAS-Backup", "mkdir start: $base")
-        val req = Request.Builder().url(url).apply {
-            if (cookie.isNotEmpty()) header("Cookie", cookie)
-        }.post(EMPTY_BODY).build()
-        return try {
-            client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string() ?: ""
-                android.util.Log.i("DDNAS-Backup", "mkdir end: $base code=${resp.code} body=${body.take(160)}")
-                if (!resp.isSuccessful) {
-                    // 401 = cookie 失效；其他 = 上游/路径问题
-                    val hint = if (resp.code == 401) "登录已失效，请重新打开页面后再备份"
-                               else "HTTP ${resp.code}"
-                    "远程目录不可用：$base（$hint）"
-                } else if (!body.contains("\"ok\":true") && !body.contains("\"ok\": true")) {
-                    // 业务失败：上游返回 ok:false 或错误 JSON，尝试提取 error/message
-                    val msg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-                        ?: body.take(80)
-                    "远程目录不可用：$base（$msg）"
-                } else {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            Log_w("mkdir exception: $base", e)
-            "远程目录不可用：$base（网络异常：${e.message}）"
-        }
-    }
-
-    /** 递归创建远程目录链：从 remoteBase 下一层逐层 mkdir 到 fullParent。
-     *  OpenList/AList 的 /api/fs/mkdir 不递归建父目录，父目录不存在时建子目录
-     *  会"假成功"（上游返回 ok 但实际未建），导致后续上传全部失败。
-     *  已建层用 cache 跳过避免重复请求。
-     *  返回 null=全部成功；非空=失败原因（含失败的那一层路径）。 */
-    private fun ensureRemoteDirs(
-        origin: String, cookie: String, remoteBase: String,
-        fullParent: String, cache: MutableSet<String>
-    ): String? {
-        val base = remoteBase.trimEnd('/')
-        if (fullParent.isEmpty() || fullParent == base) return null  // fullParent 就是根，已建过
-        // fullParent 不在 base 之下：保险起见直接 mkdir fullParent
-        if (base.isNotEmpty() && !fullParent.startsWith(base + "/")) {
-            if (fullParent in cache) return null
-            cache.add(fullParent)
-            return mkdirRemote(origin, cookie, fullParent)?.let { "$fullParent：$it" }
-        }
-        // 取 fullParent 相对 base 的剩余部分，按 "/" 分段逐层 mkdir
-        val rest = if (base.isEmpty()) fullParent.trimStart('/') else fullParent.removePrefix(base + "/")
-        val parts = rest.split("/").filter { it.isNotEmpty() }
-        var cur = if (base.isEmpty()) "" else base
-        for (p in parts) {
-            cur = if (cur.isEmpty()) "/$p" else "$cur/$p"
-            if (cur in cache) continue
-            cache.add(cur)
-            val err = mkdirRemote(origin, cookie, cur)
-            if (err != null) return "$cur：$err"
-        }
-        return null
-    }
-
-    private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile, done: Int, total: Int): Boolean {
-        val url = origin.trimEnd('/') + "/portal/api/files/upload?path=" + URLEncoder.encode(dest, "UTF-8")
-        val length = file.length()
-        val name = file.name ?: dest.substringAfterLast('/')
-        android.util.Log.i("DDNAS-Backup", "upload start: $name size=${fmtBytes(length)} dest=$dest")
-        // 流式 RequestBody：直接读 contentResolver 流，避免整文件入内存。
-        // 每 1MB 更新一次进度，避免大视频文件上传时 UI 卡在 0/total 不刷新
-        // （用户误以为卡死；实际正在传，只是没有进度回调）
-        val body = object : RequestBody() {
-            override fun contentType() = "application/octet-stream".toMediaType()
-            override fun contentLength(): Long = length
-            override fun writeTo(sink: okio.BufferedSink) {
-                contentResolver.openInputStream(file.uri)?.use { input: InputStream ->
-                    val buf = ByteArray(64 * 1024)
-                    var sent = 0L
-                    var lastReport = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n <= 0) break
-                        sink.write(buf, 0, n)
-                        sent += n.toLong()
-                        // 每 1MB 或完成时更新一次，避免高频刷新卡 UI
-                        if (sent - lastReport >= 1024 * 1024 || sent == length) {
-                            lastReport = sent
-                            _progress.value = Progress.Running(done, total, "$name (${fmtBytes(sent)}/${fmtBytes(length)})")
-                        }
-                    }
-                } ?: throw IllegalStateException("无法读取文件 $name")
-            }
-        }
-        val req = Request.Builder().url(url).apply {
-            if (cookie.isNotEmpty()) header("Cookie", cookie)
-        }.post(body).build()
-        return try {
-            client.newCall(req).execute().use { resp ->
-                val ok = resp.isSuccessful
-                android.util.Log.i("DDNAS-Backup", "upload end: $name ok=$ok code=${resp.code} sent=${fmtBytes(length)}")
-                ok
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("DDNAS-Backup", "upload exception: $name", e)
-            throw e
-        }
-    }
-
-    /** 字节数 → "12.3MB" / "456KB" / "1.2GB"，便于进度展示。 */
-    private fun fmtBytes(b: Long): String {
-        if (b < 1024) return b.toString() + "B"
-        val kb = b / 1024.0
-        if (kb < 1024) return String.format("%.1fKB", kb)
-        val mb = kb / 1024.0
-        if (mb < 1024) return String.format("%.1fMB", mb)
-        return String.format("%.2fGB", mb / 1024.0)
     }
 
     private fun buildNotification(text: String, done: Int, total: Int): Notification {
@@ -408,11 +92,6 @@ class BackupService : Service() {
         } else {
             startForeground(id, notification)
         }
-    }
-
-    // Log_w 包装，避免 import android.util.Log（保持文件简洁）
-    private fun Log_w(msg: String, e: Exception) {
-        android.util.Log.w("DDNAS-Backup", msg, e)
     }
 
     sealed interface Progress {
@@ -443,8 +122,6 @@ class BackupService : Service() {
         const val EXTRA_COOKIE = "cookie"
         const val EXTRA_REMOTE_BASE = "remote_base"
         private const val NOTIF_ID = 4242
-        // mkdir 用的空 RequestBody（OkHttp POST 需要非空 body）
-        private val EMPTY_BODY = RequestBody.create(null, ByteArray(0))
         private val _progress = MutableStateFlow<Progress>(Progress.Idle)
         val progress: StateFlow<Progress> = _progress
 
@@ -454,5 +131,13 @@ class BackupService : Service() {
         @Volatile private var cancelled = false
         fun isRunning(): Boolean = running
         fun cancel() { cancelled = true }
+
+        // 供 BackupEngine 读取取消标志
+        fun isCancelled(): Boolean = cancelled
+        // 供 BackupEngine/Service 写入进度（_progress 对外部不可写）
+        internal fun emitProgress(p: Progress) { _progress.value = p }
+        // Service 启动/结束时设置运行标志，避免并发备份
+        fun setRunning(v: Boolean) { running = v }
+        fun setCancelled(v: Boolean) { cancelled = v }
     }
 }

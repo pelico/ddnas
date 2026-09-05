@@ -1076,8 +1076,12 @@ window.__onBackupProgress=function(p){
     if(fillEl)fillEl.style.width="0%";
     if(curEl){curEl.textContent=p.message||"出错";curEl.className="bk-prog-cur err";}
   }
-  // 备份结束（done/error）后刷新历史列表，确保最新一条入库后立即可见
-  if(bkPhase==="done"||bkPhase==="error"){setTimeout(loadBackupHistory,800);}
+  // 备份结束（done/error）后刷新历史列表，确保最新一条入库后立即可见；
+  // 同时刷新"上次备份"时间（setLastBackupTime 在 Progress.Done 之后才写入，留 1s 余量）
+  if(bkPhase==="done"||bkPhase==="error"){
+    setTimeout(loadBackupHistory,800);
+    setTimeout(loadBackupConfig,1000);
+  }
 };
 
 /* ========= 下载任务管理（DDM3U8，通过能力路由 /portal/api/download/*） =========

@@ -51,6 +51,17 @@ class MusicService : Service() {
     private var host = ""
     private var cookie = ""
 
+    // 播放进度定时推送：等价于 Web 端 Audio.timeupdate 事件
+    private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            if (player?.isPlaying == true) {
+                notifyState()
+                progressHandler.postDelayed(this, 1000)
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -126,6 +137,7 @@ class MusicService : Service() {
     }
 
     fun stopMusic() {
+        progressHandler.removeCallbacks(progressRunnable)
         player?.stop()
         releaseLocks()
         abandonAudioFocus()
@@ -159,6 +171,9 @@ class MusicService : Service() {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         notifyState()
                         updateNotification(playlist.getOrNull(p.currentMediaItemIndex)?.name ?: "")
+                        // 播放中启动定时进度推送，暂停/停止时取消
+                        progressHandler.removeCallbacks(progressRunnable)
+                        if (isPlaying) progressHandler.postDelayed(progressRunnable, 1000)
                     }
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         currentIndex = p.currentMediaItemIndex
@@ -305,6 +320,7 @@ class MusicService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        progressHandler.removeCallbacks(progressRunnable)
         player?.release()
         player = null
         mediaSession?.release()

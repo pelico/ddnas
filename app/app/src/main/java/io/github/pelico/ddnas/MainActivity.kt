@@ -460,35 +460,48 @@ class MainActivity : ComponentActivity() {
             MusicService.play(this@MainActivity, index, tracks, origin, cookie)
         }
 
-        /** 播放控制：play / pause / next / prev / stop */
+        /** 播放控制：play / pause / next / prev / stop。
+         *  JS 桥方法运行在 binder 线程，ExoPlayer 必须在主线程（创建线程）调用，
+         *  否则 verifyApplicationThread 警告 + 内部状态非线程安全导致操作静默失效。 */
         @JavascriptInterface
         fun musicControl(action: String) {
-            val svc = MusicService.instance ?: return
-            when (action) {
-                "play" -> svc.resumePlayer()
-                "pause" -> svc.pausePlayer()
-                "next" -> svc.nextTrack()
-                "prev" -> svc.prevTrack()
-                "stop" -> svc.stopMusic()
+            runOnUiThread {
+                val svc = MusicService.instance ?: return@runOnUiThread
+                when (action) {
+                    "play" -> svc.resumePlayer()
+                    "pause" -> svc.pausePlayer()
+                    "next" -> svc.nextTrack()
+                    "prev" -> svc.prevTrack()
+                    "stop" -> svc.stopMusic()
+                }
             }
         }
 
         /** 播放列表中指定索引的歌曲。 */
         @JavascriptInterface
         fun musicPlayAt(index: Int) {
-            MusicService.instance?.playAt(index)
+            runOnUiThread { MusicService.instance?.playAt(index) }
         }
 
         /** 拖动进度：percent 0~100，Service 内按 duration 换算 position。 */
         @JavascriptInterface
         fun musicSeek(percent: Int) {
-            MusicService.instance?.seekToPercent(percent)
+            runOnUiThread { MusicService.instance?.seekToPercent(percent) }
         }
 
-        /** 返回当前播放状态 JSON：{playing,index,position,duration}。 */
+        /** 返回当前播放状态 JSON：{playing,index,position,duration}。
+         *  同步在主线程执行（binder 线程阻塞等待结果，最多 1s 超时）。 */
         @JavascriptInterface
-        fun getMusicState(): String = MusicService.instance?.getStateJson()
-            ?: """{"playing":false,"index":0,"position":0,"duration":0}"""
+        fun getMusicState(): String {
+            val result = arrayOf("""{"playing":false,"index":0,"position":0,"duration":0}""")
+            val latch = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread {
+                result[0] = MusicService.instance?.getStateJson() ?: result[0]
+                latch.countDown()
+            }
+            try { latch.await(1, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {}
+            return result[0]
+        }
 
         private fun escJSON(s: String): String =
             s.replace("\\", "\\\\").replace("\"", "\\\"")
