@@ -309,7 +309,7 @@ class MainActivity : ComponentActivity() {
                 text = {
                     Column {
                         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("地址 http://...") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("地址（可省略 http(s)://）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
                 },
                 confirmButton = {

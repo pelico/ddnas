@@ -31,13 +31,13 @@ class ServerStore(private val context: Context) {
     val activeIndex: Flow<Int> = context.serversDataStore.data.map { it[activeKey] ?: 0 }
 
     suspend fun add(name: String, url: String) {
-        context.serversDataStore.edit { it[serversKey] = (it[serversKey]?.parseServers() ?: emptyList()).plus(Server(name.trim(), url.trim())).joinString() }
+        context.serversDataStore.edit { it[serversKey] = (it[serversKey]?.parseServers() ?: emptyList()).plus(Server(name.trim(), normalizeUrl(url))).joinString() }
     }
 
     suspend fun update(index: Int, name: String, url: String) {
         context.serversDataStore.edit { prefs ->
             val list = (prefs[serversKey]?.parseServers() ?: emptyList()).toMutableList()
-            if (index in list.indices) list[index] = Server(name.trim(), url.trim())
+            if (index in list.indices) list[index] = Server(name.trim(), normalizeUrl(url))
             prefs[serversKey] = list.joinString()
         }
     }
@@ -68,6 +68,22 @@ class ServerStore(private val context: Context) {
     private fun String.parseServers(): List<Server> =
         split("\n").mapNotNull { line ->
             val p = line.split("\u0001")
-            if (p.size == 2 && p[1].isNotBlank()) Server(p[0], p[1]) else null
+            if (p.size == 2 && p[1].isNotBlank()) Server(p[0], normalizeUrl(p[1])) else null
         }
+
+    /** 规范化服务器地址：缺省协议时自动补全，避免用户漏写 http(s) 导致请求失败。
+     *  - 已有 http:// 或 https:// 前缀：仅去尾部 /
+     *  - Cloudflare 相关域名（trycloudflare.com / workers.dev 等）补 https://
+     *  - 其余（局域网 IP/域名）默认补 http:// */
+    private fun normalizeUrl(raw: String): String {
+        var u = raw.trim().trimEnd('/')
+        if (u.startsWith("http://") || u.startsWith("https://")) return u
+        val lower = u.lowercase()
+        val scheme = if (lower.contains("trycloudflare") || lower.contains("workers.dev") || lower.contains("cloudflare")) {
+            "https://"
+        } else {
+            "http://"
+        }
+        return scheme + u
+    }
 }
