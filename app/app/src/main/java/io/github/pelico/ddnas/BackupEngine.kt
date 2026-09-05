@@ -100,16 +100,29 @@ class BackupEngine(
 
             emit(BackupService.Progress.Running(0, total, toUpload.first().first.name ?: ""))
             var done = 0
+            var uploaded = 0
             var failed = 0
+            var skippedRemote = 0
             // 已创建的远程子目录缓存：根目录已 mkdir 过，加入避免重复
             val mkdirCache = mutableSetOf(remoteBase.trimEnd('/'))
             for ((file, rel) in toUpload) {
                 // 用户点"取消备份"后，等当前文件传完即退出循环
                 if (BackupService.isCancelled()) {
-                    emit(BackupService.Progress.Done("已取消（已传 $done 个文件）"))
+                    emit(BackupService.Progress.Done("已取消（已传 $uploaded 个文件）"))
                     return Result.Cancelled
                 }
                 val dest = (remoteBase.trimEnd('/') + "/" + rel).replace(Regex("/+"), "/")
+                val localSize = file.length()
+                // 增量兜底：manifest 以 treeUri+remoteBase 的 hashCode 作命名空间，
+                // 重新选本地目录(新 treeUri)或重新浏览远端(改 remoteBase 写法)都会让
+                // hashCode 变 → 命中不到旧记录 → 误判为待传。这里再以远端实际存在性
+                // 兜底：同名且同大小视为已备份，跳过，避免重复上传已存在的文件。
+                if (remoteFileSize(origin, cookie, dest) == localSize) {
+                    manifest.markUploaded(rel, localSize, file.lastModified())
+                    skippedRemote++; done++
+                    emit(BackupService.Progress.Running(done, total, file.name ?: rel))
+                    continue
+                }
                 val parent = dest.substringBeforeLast('/').trimEnd('/')
                 if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
                     val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
@@ -137,6 +150,7 @@ class BackupEngine(
                 }
                 if (ok) {
                     manifest.markUploaded(rel, file.length(), file.lastModified())
+                    uploaded++
                 } else {
                     failed++
                     failedFiles.add(rel)
@@ -145,8 +159,8 @@ class BackupEngine(
                 emit(BackupService.Progress.Running(done, total, file.name ?: rel))
             }
             val msg = buildString {
-                append("备份完成：上传 $done 个文件")
-                if (skipped > 0) append("，跳过 $skipped 个未变更")
+                append("备份完成：上传 $uploaded 个文件")
+                if (skipped + skippedRemote > 0) append("，跳过 ${skipped + skippedRemote} 个（未变更/远端已存在）")
                 if (failed > 0) append("，失败 $failed 个")
             }
             // 上报备份历史到中间件 SQLite
@@ -230,6 +244,24 @@ class BackupEngine(
             Log_w("mkdir exception: $base", e)
             "远程目录不可用：$base（网络异常：${e.message}）"
         }
+    }
+
+    /** 查询远端文件大小；不存在/出错/是目录返回 null。
+     *  增量备份兜底用：manifest 命中不到时再以远端实际存在性判断，避免重复上传已存在文件。 */
+    private fun remoteFileSize(origin: String, cookie: String, dest: String): Long? {
+        val url = origin.trimEnd('/') + "/portal/api/files/get?path=" + URLEncoder.encode(dest, "UTF-8")
+        val req = Request.Builder().url(url).apply {
+            if (cookie.isNotEmpty()) header("Cookie", cookie)
+        }.get().build()
+        return try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val body = resp.body?.string() ?: return@use null
+                // OpenList /files/get 返回 {name,size,is_dir,...}；目录不算
+                if (Regex("\"is_dir\"\\s*:\\s*true").containsMatchIn(body)) return@use null
+                Regex("\"size\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toLongOrNull()
+            }
+        } catch (_: Exception) { null }
     }
 
     private fun ensureRemoteDirs(
