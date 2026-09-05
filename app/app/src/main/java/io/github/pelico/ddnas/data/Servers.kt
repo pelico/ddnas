@@ -71,19 +71,25 @@ class ServerStore(private val context: Context) {
             if (p.size == 2 && p[1].isNotBlank()) Server(p[0], normalizeUrl(p[1])) else null
         }
 
-    /** 规范化服务器地址：缺省协议时自动补全，避免用户漏写 http(s) 导致请求失败。
-     *  - 已有 http:// 或 https:// 前缀（不区分大小写）：仅去尾部 /
-     *  - Cloudflare 相关域名（trycloudflare.com / workers.dev 等）补 https://
-     *  - 其余（局域网 IP/域名）默认补 http:// */
+    /** 规范化服务器地址：缺省协议时自动补全，避免漏写 http(s) 或写错导致请求/鉴权失败。
+     *  - 已是 https://：保留
+     *  - 已是 http://：内网(localhost/私网IP/.local/.lan)保留 http；公网域名升级为 https
+     *    （公网域名几乎都走 https/Cloudflare/HSTS。若仍存 http://，WebView 加载后被
+     *    服务器 301 跳到 https，会话 cookie 落在 https，而 getCookie("http://...") 取不到
+     *    Secure cookie，导致备份 mkdir 401"远程目录不可用"）
+     *  - 无前缀：内网补 http://，公网补 https:// */
     private fun normalizeUrl(raw: String): String {
         val u = raw.trim().trimEnd('/')
         val lower = u.lowercase()
-        if (lower.startsWith("http://") || lower.startsWith("https://")) return u
-        val scheme = if (lower.contains("trycloudflare") || lower.contains("workers.dev") || lower.contains("cloudflare")) {
-            "https://"
+        if (lower.startsWith("https://")) return u
+        val host = lower.substringAfter("://").substringBefore(":").substringBefore("/")
+        val lan = host == "localhost"
+            || host.endsWith(".local") || host.endsWith(".lan")
+            || Regex("""^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)""").containsMatchIn(host)
+        return if (lower.startsWith("http://")) {
+            if (lan) u else "https://" + lower.substringAfter("http://")
         } else {
-            "http://"
+            (if (lan) "http://" else "https://") + u
         }
-        return scheme + u
     }
 }
