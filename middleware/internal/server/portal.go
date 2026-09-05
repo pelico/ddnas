@@ -287,13 +287,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* 远程目录浏览弹层 */
 /* inset:0 在旧 WebView 可能无效，用 top/left/right/bottom:0 替代；
    transform:translateZ(0) 会创建新层叠上下文，部分 WebView 下
-   position:fixed 子元素被降级为 absolute，移除避免该问题 */
+   position:fixed 子元素被降级为 absolute，移除避免该问题。
+   卡片高度不用 vh：App WebView 下 vh 可能按整窗口/文档算，与 position:fixed
+   的实际可视矩形不一致，导致卡片高出可视区，overflow:hidden 把"选择此目录"
+   按钮裁到屏外。改用相对 fixed 遮罩的百分比 + max-height 兜底；列表 min-height:0
+   可收缩，确保页脚按钮始终在可视区内。 */
 .bk-browse{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain}
-.bk-browse-card{background:var(--card,#fff) !important;margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;min-height:300px;height:80vh;max-height:80vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+.bk-browse-card{background:var(--card,#fff) !important;margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;height:80%;max-height:calc(100% - 32px);min-height:160px;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
 .bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
 .bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));word-break:break-all;flex-shrink:0}
-.bk-browse-list{flex:1;min-height:200px;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
+.bk-browse-list{flex:1;min-height:0;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
 .bk-browse-item{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
 .bk-browse-item:active{background:var(--surface2)}
 .bk-browse-item .ic{font-size:16px;opacity:.8}
