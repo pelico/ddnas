@@ -72,13 +72,13 @@ class ServerStore(private val context: Context) {
         }
 
     /** 规范化服务器地址：缺省协议时自动补全，避免用户漏写 http(s) 导致请求失败。
-     *  - 已有 http:// 或 https:// 前缀：仅去尾部 /
+     *  - 已有 http:// 或 https:// 前缀（不区分大小写）：仅去尾部 /
      *  - Cloudflare 相关域名（trycloudflare.com / workers.dev 等）补 https://
      *  - 其余（局域网 IP/域名）默认补 http:// */
     private fun normalizeUrl(raw: String): String {
-        var u = raw.trim().trimEnd('/')
-        if (u.startsWith("http://") || u.startsWith("https://")) return u
+        val u = raw.trim().trimEnd('/')
         val lower = u.lowercase()
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return u
         val scheme = if (lower.contains("trycloudflare") || lower.contains("workers.dev") || lower.contains("cloudflare")) {
             "https://"
         } else {
