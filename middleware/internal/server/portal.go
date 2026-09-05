@@ -285,8 +285,11 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-hist-failed .fl-list{white-space:pre-wrap;word-break:break-all;line-height:1.5;max-height:120px;overflow:auto}
 
 /* 远程目录浏览弹层 */
-.bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain;-webkit-transform:translateZ(0);transform:translateZ(0)}
-.bk-browse-card{background:var(--card,#fff);margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;height:80vh;max-height:80vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+/* inset:0 在旧 WebView 可能无效，用 top/left/right/bottom:0 替代；
+   transform:translateZ(0) 会创建新层叠上下文，部分 WebView 下
+   position:fixed 子元素被降级为 absolute，移除避免该问题 */
+.bk-browse{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain}
+.bk-browse-card{background:var(--card,#fff) !important;margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;min-height:300px;height:80vh;max-height:80vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
 .bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
 .bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));word-break:break-all;flex-shrink:0}
@@ -1247,12 +1250,16 @@ function browseLoad(p){
   if(!pathEl||!listEl)return;
   pathEl.textContent="/"+browseCur;
   listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
-  // AbortController + 超时：避免 WebView 内 fetch 卡死（Cloudflare/网络问题时一直 pending），
-  // 超时后明确提示，便于用户排查（而不是永远"加载中…"）。
-  const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),15000);
+  // AbortController 在旧版 WebView（无 Google Play 的国产设备）可能不存在，
+  // 直接 new 会抛 ReferenceError 且无人捕获，导致函数卡死在"加载中…"。
+  // 降级：无 AbortController 时用普通 fetch（无超时），至少能正常加载。
+  let ctrl=null,timer=null;
+  try{ctrl=new AbortController();}catch(e){ctrl=null;}
+  if(ctrl)timer=setTimeout(()=>{try{ctrl.abort();}catch(_){}},15000);
   const url="/portal/api/files/list?path="+encodeURIComponent(browseCur);
-  fetch(url,{credentials:"same-origin",signal:ctrl.signal}).then(r=>{
+  const opts={credentials:"same-origin"};
+  if(ctrl)opts.signal=ctrl.signal;
+  fetch(url,opts).then(r=>{
     if(!r.ok){
       // 401：cookie 失效，提示用户回首页触发重新登录
       const hint=r.status===401?"（登录已失效，请下拉刷新或重新打开页面）":"";
@@ -1260,7 +1267,7 @@ function browseLoad(p){
     }
     return r.json();
   }).then(resp=>{
-    clearTimeout(timer);
+    if(timer)clearTimeout(timer);
     if(resp.error)throw new Error(resp.error);
     const items=(resp.items||[]).filter(it=>{
       // 兼容 is_dir 是 boolean 或 0/1 数字（AList 不同版本可能两种形式）
@@ -1281,9 +1288,9 @@ function browseLoad(p){
       el.addEventListener("click",()=>browseLoad(el.dataset.rel||""));
     });
   }).catch(e=>{
-    clearTimeout(timer);
+    if(timer)clearTimeout(timer);
     // AbortError 单独标识：网络未在 15s 内响应（典型 Cloudflare 卡死）
-    const msg=e&&e.name==="AbortError"?"加载超时（15s 内无响应，可能网络受限或代理拦截）":e.message;
+    const msg=(ctrl&&e&&e.name==="AbortError")?"加载超时（15s 内无响应，可能网络受限或代理拦截）":(e&&e.message||"加载失败");
     // 通过 ddnas 桥输出到 Logcat（App WebView 内可用）
     try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log("[browse] "+url+" -> "+msg);}catch(_){}
     listEl.innerHTML='<div class="bk-browse-empty">加载失败：'+esc(msg)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
