@@ -427,6 +427,7 @@ func parseFS(metrics []metric) []fsInfo {
 			dev[mp] = d
 			fs[mp] = m.labels["fstype"]
 		case "node_filesystem_free_bytes":
+			mp := m.labels["mountpoint"]
 			// 只记录已注册 mountpoint 的 free，避免孤儿 free 污染
 			if _, ok := size[mp]; ok {
 				free[mp] = m.value
