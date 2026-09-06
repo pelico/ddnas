@@ -331,6 +331,10 @@ func parseSystem(ms []metric) systemInfo {
 	}
 	if info.Memory.Total > 0 {
 		info.Memory.Used = info.Memory.Total - info.Memory.Available
+		// 脏数据守卫：Available > Total（node_exporter 偶发异常）时 used 为负，置 0
+		if info.Memory.Used < 0 {
+			info.Memory.Used = 0
+		}
 		info.Memory.UsagePercent = info.Memory.Used / info.Memory.Total * 100
 	}
 	info.Disks = parseFS(ms)
@@ -398,14 +402,35 @@ func parseFS(metrics []metric) []fsInfo {
 	free := map[string]float64{}
 	dev := map[string]string{}
 	fs := map[string]string{}
+	// 按 device 去重：同一底层设备只保留首个非 bind mount 的 mountpoint。
+	// Docker 容器会把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf
+	// bind mount 进容器，node_exporter 看到同一 /dev/xxx 挂到 3 个 mountpoint，
+	// 用 mountpoint 作 key 会把同一磁盘显示成 3 个，前端累加容量虚高 3 倍。
+	seenDev := map[string]bool{}
 	for _, m := range metrics {
 		switch m.name {
 		case "node_filesystem_size_bytes":
-			size[m.labels["mountpoint"]] = m.value
-			dev[m.labels["mountpoint"]] = m.labels["device"]
-			fs[m.labels["mountpoint"]] = m.labels["fstype"]
+			mp := m.labels["mountpoint"]
+			d := m.labels["device"]
+			// 过滤容器 bind mount：这些是宿主文件被 bind 进容器，非真实磁盘挂载
+			if isBindMount(mp) {
+				continue
+			}
+			// 同一 device 只保留首次出现的 mountpoint（同一底层盘可能 bind 多处）
+			if d != "" && seenDev[d] {
+				continue
+			}
+			if d != "" {
+				seenDev[d] = true
+			}
+			size[mp] = m.value
+			dev[mp] = d
+			fs[mp] = m.labels["fstype"]
 		case "node_filesystem_free_bytes":
-			free[m.labels["mountpoint"]] = m.value
+			// 只记录已注册 mountpoint 的 free，避免孤儿 free 污染
+			if _, ok := size[mp]; ok {
+				free[mp] = m.value
+			}
 		}
 	}
 	var out []fsInfo
@@ -418,6 +443,10 @@ func parseFS(metrics []metric) []fsInfo {
 		}
 		f := free[mp]
 		used := tot - f
+		// 脏数据守卫：free > size（node_exporter 偶发异常）时 used 为负，置 0
+		if used < 0 {
+			used = 0
+		}
 		pct := 0.0
 		if tot > 0 {
 			pct = used / tot * 100
@@ -432,6 +461,18 @@ func parseFS(metrics []metric) []fsInfo {
 		})
 	}
 	return out
+}
+
+// isBindMount 判断是否为容器 bind mount 的目标文件。
+// Docker 把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf bind 进容器，
+// node_exporter 看到同一底层 device 挂到这些 mountpoint，导致 parseFS
+// 把同一磁盘重复计数。这些不是真实磁盘挂载，过滤掉。
+func isBindMount(mp string) bool {
+	switch mp {
+	case "/etc/hostname", "/etc/hosts", "/etc/resolv.conf":
+		return true
+	}
+	return false
 }
 
 // isVirtualFS 判断是否为虚拟/临时文件系统，这类不应计入真实存储容量。
@@ -489,14 +530,12 @@ func isVirtualNet(dev string) bool {
 		return true
 	}
 	switch {
-	case strings.HasPrefix(dev, "docker"),
-		strings.HasPrefix(dev, "veth"),
-		strings.HasPrefix(dev, "br-"),
-		strings.HasPrefix(dev, "veth"),
-		strings.HasPrefix(dev, "cni"),
-		strings.HasPrefix(dev, "flannel"),
-		dev == "docker0",
-		dev == "br0":
+	case strings.HasPrefix(dev, "docker"), // docker0/dockerX
+		strings.HasPrefix(dev, "veth"),  // vethXXX 容器虚拟网卡
+		strings.HasPrefix(dev, "br-"),   // br-XXX Docker 网桥
+		strings.HasPrefix(dev, "cni"),   // CNI 插件虚拟网卡
+		strings.HasPrefix(dev, "flannel"), // flannel 虚拟网卡
+		dev == "br0":                    // 无连字符网桥
 		return true
 	}
 	return false
