@@ -1159,11 +1159,17 @@ function submitDownload(){
   const url=urlEl.value.trim();
   if(!url){toast("请粘贴 m3u8 链接");urlEl.focus();return;}
   if(goBtn){goBtn.disabled=true;goBtn.textContent="提交中…";}
+  // 路径安全化：name/sub_path 用于 DDM3U8 拼临时目录与最终文件路径，
+  // 含 / \ .. 空格开头等会让 mkdir 失败或越权，需清洗。
+  function safeName(s){return (s||"").trim().replace(/[\/\\]+/g,"_").replace(/^\.\.+/g,"").replace(/^\s+/,"").replace(/\s+$/g");}
+  function safePath(s){return (s||"").trim().replace(/^[\/\\]+/,"").replace(/[\/\\]+/g,"/").replace(/^\.\.+/g,"");}
+  const name=safeName(nameEl?nameEl.value:"")||"video";
+  const subPath=subEl?safePath(subEl.value):"";
   const fd=new FormData();
   fd.append("url",url);
-  fd.append("name",nameEl?nameEl.value.trim():"video");
+  fd.append("name",name);
   if(refEl&&refEl.value.trim())fd.append("referer",refEl.value.trim());
-  if(subEl&&subEl.value.trim())fd.append("sub_path",subEl.value.trim());
+  if(subPath)fd.append("sub_path",subPath);
   fetch("/portal/api/download/submit",{method:"POST",body:fd}).then(r=>{
     return r.json().then(j=>({ok:r.ok,j}));
   }).then(({ok,j})=>{
