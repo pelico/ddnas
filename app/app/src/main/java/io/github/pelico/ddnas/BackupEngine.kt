@@ -39,6 +39,16 @@ class BackupEngine(
         data class Failed(val message: String) : Result() // 出错/全部失败
     }
 
+    /** 取消信号：writeTo 循环检测到取消时抛出，立即中断 HTTP 请求体写入，
+     *  OkHttp 连接随之断开，不必等整个文件传完才能取消。 */
+    private class CancelledException : java.io.IOException("backup cancelled")
+
+    /** 单次上传结果：含 HTTP 状态码，供调用方判断是否值得重试。
+     *  - 2xx：成功
+     *  - 4xx：客户端错误（登录失效/权限/文件过大），重试也是同样结果，不重试
+     *  - 5xx/网络异常：可重试 */
+    private data class UploadOutcome(val ok: Boolean, val code: Int)
+
     /**
      * 执行增量备份。
      * @param reportHistory 是否上报历史到中间件 SQLite（手动备份上报；Worker 也上报，便于 portal 查看）
@@ -133,15 +143,28 @@ class BackupEngine(
                     }
                 }
                 // 单文件最多重试 3 次，指数退避：1s → 2s → 4s
+                // 取消信号 / 4xx 客户端错误不重试，避免大文件白白重传一遍
                 var ok = false
                 for (attempt in 0..2) {
                     if (BackupService.isCancelled()) break
-                    ok = try {
-                        uploadFile(origin, cookie, dest, file, done, total)
+                    var outcome: UploadOutcome? = null
+                    try {
+                        outcome = uploadFile(origin, cookie, dest, file, done, total)
+                        ok = outcome.ok
+                    } catch (e: CancelledException) {
+                        // 用户取消：writeTo 循环已中断写入，立即停止，不再重试
+                        emit(BackupService.Progress.Done("已取消（已传 $uploaded 个文件）"))
+                        return Result.Cancelled
                     } catch (e: Exception) {
-                        Log_w("upload attempt ${attempt + 1} fail: $rel", e); false
+                        Log_w("upload attempt ${attempt + 1} fail: $rel", e)
+                        ok = false
                     }
                     if (ok) break
+                    // 4xx 客户端错误（401 登录失效/403 权限/413 文件过大等）：
+                    // 重试也是同样结果，且大文件重传浪费流量，直接放弃重试
+                    if (outcome != null && outcome.code in 400..499) {
+                        break
+                    }
                     if (attempt < 2) {
                         val backoff = (1000L shl attempt)
                         emit(BackupService.Progress.Running(done, total, "重试(${attempt + 1}/3) ${file.name ?: rel}"))
@@ -288,7 +311,7 @@ class BackupEngine(
         return null
     }
 
-    private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile, done: Int, total: Int): Boolean {
+    private fun uploadFile(origin: String, cookie: String, dest: String, file: DocumentFile, done: Int, total: Int): UploadOutcome {
         val url = origin.trimEnd('/') + "/portal/api/files/upload?path=" + URLEncoder.encode(dest, "UTF-8")
         val length = file.length()
         val name = file.name ?: dest.substringAfterLast('/')
@@ -302,6 +325,10 @@ class BackupEngine(
                     var sent = 0L
                     var lastReport = 0L
                     while (true) {
+                        // 取消立即生效：每读一块都检查标志，一旦取消抛
+                        // CancelledException 中断写入，OkHttp 连接随之断开，
+                        // 不必等整个文件传完才能取消。
+                        if (BackupService.isCancelled()) throw CancelledException()
                         val n = input.read(buf)
                         if (n <= 0) break
                         sink.write(buf, 0, n)
@@ -321,11 +348,15 @@ class BackupEngine(
             client.newCall(req).execute().use { resp ->
                 val ok = resp.isSuccessful
                 android.util.Log.i("DDNAS-Backup", "upload end: $name ok=$ok code=${resp.code} sent=${fmtBytes(length)}")
-                ok
+                UploadOutcome(ok, resp.code)
             }
+        } catch (e: CancelledException) {
+            // writeTo 检测到取消：向上抛，由 runBackup 重试循环捕获后立即返回
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("DDNAS-Backup", "upload exception: $name", e)
-            throw e
+            // 网络异常视为可重试：code=0 表示无 HTTP 响应（连接超时/断开等）
+            UploadOutcome(false, 0)
         }
     }
 
