@@ -37,6 +37,13 @@ class BackupWorker(
         // 没选目录或没开自动备份 → 跳过
         if (cfg.treeUri.isEmpty() || !cfg.autoBackup) return Result.success()
 
+        // 并发互斥：手动备份(Service)正在跑时，Worker 跳过本次，等下个周期。
+        // 避免两个备份同时上传同一目录 → 同一文件传两次 / manifest 写入竞争。
+        if (BackupService.isRunning()) {
+            android.util.Log.i("DDNAS-Worker", "手动备份进行中，跳过本次自动备份")
+            return Result.success()
+        }
+
         // 找活跃服务器（servers/activeIndex 是 Flow，doWork 是 suspend 可直接 .first()）
         val serverStore = ServerStore(ctx)
         val servers = serverStore.servers.first()

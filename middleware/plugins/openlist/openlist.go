@@ -344,6 +344,19 @@ func (a *Adapter) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, fmt.Sprintf("OpenList 上传失败(%d): %s", resp.StatusCode, string(body)))
 		return
 	}
+	// OpenList/AList 用 {"code":200,...} 表示业务结果，HTTP 恒 200；
+	// code 非 0 且非 200 视为业务失败（如空间不足/无权限/路径非法），
+	// 避免 HTTP 200 但实际写入失败时谎报 ok:true，导致 App 端 markUploaded
+	// 后跳过该文件 → 数据丢失。
+	var aj struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &aj) == nil && aj.Code != 0 && aj.Code != 200 {
+		log.Printf("[openlist] upload 业务失败 code=%d msg=%s path=%s", aj.Code, aj.Message, full)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": aj.Message, "code": aj.Code, "path": full})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": full})
 }
 

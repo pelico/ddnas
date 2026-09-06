@@ -346,9 +346,23 @@ class BackupEngine(
         }.post(body).build()
         return try {
             client.newCall(req).execute().use { resp ->
-                val ok = resp.isSuccessful
-                android.util.Log.i("DDNAS-Backup", "upload end: $name ok=$ok code=${resp.code} sent=${fmtBytes(length)}")
-                UploadOutcome(ok, resp.code)
+                val respBody = resp.body?.string() ?: ""
+                // 不只看 HTTP code：OpenList/AList HTTP 恒 200，业务结果在 body 的
+                // {"code":xxx,"message":...}。中间件 handleUpload 已把业务失败转成
+                // {"ok":false,"error":...}。这里双重校验：
+                // 1) HTTP 非 2xx → 失败（用 resp.code 让重试逻辑判断 4xx 不重试）
+                // 2) body 不含 "ok":true → 失败（业务层失败，如空间不足/权限/路径非法）
+                val httpOk = resp.isSuccessful
+                val bizOk = httpOk && respBody.contains("\"ok\":true")
+                android.util.Log.i("DDNAS-Backup", "upload end: $name httpOk=$httpOk bizOk=$bizOk code=${resp.code} body=${respBody.take(120)} sent=${fmtBytes(length)}")
+                if (httpOk && !bizOk) {
+                    // HTTP 200 但业务失败：提取 error message，避免谎报成功后
+                    // markUploaded 跳过该文件 → 数据丢失。
+                    // 用 code=500 让重试逻辑走"5xx 不重试"路径（业务失败重试无意义）
+                    UploadOutcome(false, 500)
+                } else {
+                    UploadOutcome(bizOk, resp.code)
+                }
             }
         } catch (e: CancelledException) {
             // writeTo 检测到取消：向上抛，由 runBackup 重试循环捕获后立即返回
