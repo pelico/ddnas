@@ -213,7 +213,21 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                // 登录后清理登录页历史：
+                                // 首次加载 /portal 未登录 → 302 到 /admin/login → 登录成功 302 回 /portal
+                                // 此时 WebView history = [/portal, /admin/login, /portal]
+                                // 手势返回 goBack() 会回到 /admin/login 而非退出 → 体验断裂
+                                // portal 是 SPA（tab 切换走 JS DOM 不产生 URL history），clearHistory
+                                // 只清掉登录页，不影响后续正常使用。
+                                if (url != null && url.contains("/portal") &&
+                                    view != null && view.canGoBack()) {
+                                    view.clearHistory()
+                                }
+                            }
+                        }
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
