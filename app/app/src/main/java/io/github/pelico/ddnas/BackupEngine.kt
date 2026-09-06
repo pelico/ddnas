@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.InputStream
 import java.net.URLEncoder
 
@@ -79,6 +80,9 @@ class BackupEngine(
             }
 
             emit(BackupService.Progress.Scanning)
+            // 备份前先下载远端 manifest 并合并到本地：app 重装/换设备后本地 manifest 丢失，
+            // 从远端拉取前设备的记录可避免全量重传。下载失败（首次备份/文件不存在）不阻断。
+            downloadManifest(origin, cookie, remoteBase, manifest)
             val all = ArrayList<Pair<DocumentFile, String>>()
             collect(root, "", all)
 
@@ -190,6 +194,9 @@ class BackupEngine(
             if (reportHistory) {
                 reportHistory(origin, cookie, startTime, total, done - failed, failed, failedFiles, treeUri.toString(), remoteBase)
             }
+            // 备份完成后上传 manifest 到远端：下次备份前下载合并，app 重装/换设备不丢增量历史。
+            // 即使部分文件失败也上传——已成功的条目 markUploaded 了，失败的下次重试。
+            uploadManifest(origin, cookie, remoteBase, manifest)
             // 全部失败时报 Error，避免用户误以为备份成功
             if (failed == total) {
                 val err = "全部 $failed 个文件上传失败（请检查 OpenList 挂载与写入权限）"
@@ -285,6 +292,62 @@ class BackupEngine(
                 Regex("\"size\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toLongOrNull()
             }
         } catch (_: Exception) { null }
+    }
+
+    /** manifest 远端路径：<remoteBase>/.ddnas_manifest.json
+     *  作为隐藏文件放在备份根目录下，不干扰用户文件。 */
+    private fun manifestRemotePath(remoteBase: String): String {
+        return remoteBase.trimEnd('/') + "/.ddnas_manifest.json"
+    }
+
+    /** 下载远端 manifest 并合并到本地。
+     *  备份前调用：app 重装/换设备后本地 manifest 为空，从远端拉取前设备的记录
+     *  避免全量重传。下载失败（首次备份/文件不存在/网络异常）不阻断，返回继续。 */
+    private fun downloadManifest(origin: String, cookie: String, remoteBase: String, manifest: BackupManifest) {
+        val path = manifestRemotePath(remoteBase)
+        // stream 端点路径格式：/portal/api/files/stream/<各段URL编码后用/连接>
+        val segs = path.split("/").filter { it.isNotEmpty() }
+            .joinToString("/") { URLEncoder.encode(it, "UTF-8") }
+        val url = origin.trimEnd('/') + "/portal/api/files/stream/" + segs
+        val req = Request.Builder().url(url).apply {
+            if (cookie.isNotEmpty()) header("Cookie", cookie)
+        }.get().build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return
+                val body = resp.body?.string() ?: return
+                manifest.mergeFromJson(body)
+                android.util.Log.i("DDNAS-Backup", "manifest downloaded and merged from remote")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DDNAS-Backup", "manifest download failed (ok for first backup): ${e.message}")
+        }
+    }
+
+    /** 上传本地 manifest 到远端。
+     *  备份后调用：把当前 manifest 序列化为 JSON 上传到 <remoteBase>/.ddnas_manifest.json，
+     *  下次备份前下载合并。即使部分文件失败也上传——已成功条目 markUploaded 了，失败下次重试。 */
+    private fun uploadManifest(origin: String, cookie: String, remoteBase: String, manifest: BackupManifest) {
+        val path = manifestRemotePath(remoteBase)
+        val json = manifest.toJson()
+        val url = origin.trimEnd('/') + "/portal/api/files/upload?path=" + URLEncoder.encode(path, "UTF-8")
+        val body = json.toByteArray(Charsets.UTF_8)
+            .toRequestBody("application/octet-stream".toMediaType())
+        val req = Request.Builder().url(url).apply {
+            if (cookie.isNotEmpty()) header("Cookie", cookie)
+        }.post(body).build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                val respBody = resp.body?.string() ?: ""
+                if (resp.isSuccessful && respBody.contains("\"ok\":true")) {
+                    android.util.Log.i("DDNAS-Backup", "manifest uploaded to remote: $path")
+                } else {
+                    android.util.Log.w("DDNAS-Backup", "manifest upload failed: ${resp.code} $respBody")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DDNAS-Backup", "manifest upload exception: ${e.message}")
+        }
     }
 
     private fun ensureRemoteDirs(
