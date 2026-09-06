@@ -125,22 +125,37 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .c11{background:linear-gradient(135deg,#43c5a2,#25a082)}
 .c12{background:linear-gradient(135deg,#a0a6b3,#7c8392)}
 
-/* ===== 监控 4 卡（2×2）：半环 + 指标 ===== */
-/* 监控卡：纵向堆叠的横向长方块，每行一项，紧凑 */
-.monitor{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
-.m-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 14px}
-.m-card .m-hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.m-card .m-title{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600}
-.m-card .m-title .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
-.m-card .m-title.err .dot{background:var(--warn)}
-.m-card .m-right{font-size:14px;font-weight:700}
-.m-card .m-bar{height:5px;background:var(--surface2);border-radius:999px;overflow:hidden;margin-top:8px}
+/* ===== 监控卡：2×2 网格紧凑布局（参考 fnOS/极空间手机端） ===== */
+/* 旧版纵向堆叠 4 行太长且信息密度低；改 2 列网格，环形进度+数字主指标+次指标行 */
+.monitor{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.m-card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.m-card .m-hd{display:flex;align-items:center;gap:8px}
+.m-card .m-ico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;background:var(--surface2)}
+.m-card .m-title{flex:1;min-width:0;color:var(--muted);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-card .m-right{font-size:16px;font-weight:700;color:var(--fg);line-height:1}
+.m-card .m-sub{font-size:10px;color:var(--muted2);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-card .m-vals{display:flex;gap:8px;margin-top:2px;font-size:10px;color:var(--muted);flex-wrap:wrap}
+.m-card .m-vals b{color:var(--fg);font-weight:600}
+/* 进度条：细线横条，替代旧的粗条 */
+.m-card .m-bar{height:4px;background:var(--surface2);border-radius:999px;overflow:hidden;margin-top:2px}
 .m-card .m-bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .5s}
 .m-card .m-bar.ok>i{background:var(--ok)}
 .m-card .m-bar.warn>i{background:var(--warn)}
 .m-card .m-bar.err>i{background:var(--err)}
-.m-card .m-vals{display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
-.m-card .m-vals b{color:var(--fg);font-weight:600}
+/* 环形进度（CPU/内存用）：SVG 圆环 + 中心百分比，比横条更省横向空间 */
+.m-ring{position:relative;width:44px;height:44px;flex-shrink:0}
+.m-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.m-ring .m-ring-bg{fill:none;stroke:var(--surface2);stroke-width:4}
+.m-ring .m-ring-fg{fill:none;stroke:var(--accent);stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .5s}
+.m-ring.ok .m-ring-fg{stroke:var(--ok)}
+.m-ring.warn .m-ring-fg{stroke:var(--warn)}
+.m-ring.err .m-ring-fg{stroke:var(--err)}
+.m-ring .m-ring-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:var(--fg)}
+/* 网络卡：上下行并排，主指标突出 */
+.m-card.net .m-rates{display:flex;gap:12px;margin-top:2px}
+.m-card.net .m-rate{display:flex;flex-direction:column;gap:1px}
+.m-card.net .m-rate .lbl{font-size:9px;color:var(--muted2)}
+.m-card.net .m-rate .val{font-size:13px;font-weight:700;color:var(--fg)}
 
 /* 错误 / 未启用提示卡 */
 .tip-card{
@@ -721,14 +736,48 @@ let pollTimer=null;
 // 判断圆环配色
 function barClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
 // 监控卡：横向长方块，标题+进度条+键值对，紧凑展示
-function mCardHTML(opts){
+// mRingHTML 环形进度卡（CPU/内存）：SVG 圆环 + 中心百分比 + 次指标行。
+// 比旧版横向长条卡更省横向空间，2 列网格里更紧凑。
+function mRingHTML(opts){
   const p=Math.max(0,Math.min(100,+opts.percent||0));
+  const cls=opts.err?"err":barClass(p);
+  // SVG 圆环周长 = 2πr，r=18 → 周长 ≈ 113.1，dashoffset 控制进度
+  const C=2*Math.PI*18;
+  const off=C*(1-p/100);
   const vals=(opts.metrics||[]).map(function(m){return '<span>'+esc(m.k)+' <b>'+m.v+'</b></span>';}).join("");
-  const right=opts.right?'<span class="m-right">'+opts.right+'</span>':'';
-  const bar=opts.bar!==false?('<div class="m-bar '+barClass(p)+'"><i style="width:'+p.toFixed(0)+'%"></i></div>'):'';
-  return '<div class="m-card">'+
-    '<div class="m-hd"><div class="m-title '+(opts.err?'err':'')+'"><span class="dot"></span>'+esc(opts.title)+'</div>'+right+'</div>'+
-    bar+
+  return '<div class="m-card '+(opts.cls||'')+'">'+
+    '<div class="m-hd">'+
+      '<div class="m-ico">'+(opts.ico||'📊')+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="m-title">'+esc(opts.title)+'</div>'+
+        (opts.sub?'<div class="m-sub">'+esc(opts.sub)+'</div>':'')+
+      '</div>'+
+      '<div class="m-ring '+cls+'">'+
+        '<svg viewBox="0 0 40 40">'+
+          '<circle class="m-ring-bg" cx="20" cy="20" r="18"></circle>'+
+          '<circle class="m-ring-fg" cx="20" cy="20" r="18" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'"></circle>'+
+        '</svg>'+
+        '<span class="m-ring-txt">'+p.toFixed(0)+'%</span>'+
+      '</div>'+
+    '</div>'+
+    (vals?'<div class="m-vals">'+vals+'</div>':'')+
+  '</div>';
+}
+
+// mStatHTML 纯数字卡（网络/温度）：图标+标题+主数值+次指标，无进度环。
+// 用于没有百分比概念的指标，比环形卡更轻量。
+function mStatHTML(opts){
+  const vals=(opts.metrics||[]).map(function(m){return '<span>'+esc(m.k)+' <b>'+m.v+'</b></span>';}).join("");
+  return '<div class="m-card '+(opts.cls||'')+'">'+
+    '<div class="m-hd">'+
+      '<div class="m-ico">'+(opts.ico||'📊')+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="m-title">'+esc(opts.title)+'</div>'+
+        (opts.sub?'<div class="m-sub">'+esc(opts.sub)+'</div>':'')+
+      '</div>'+
+      '<div class="m-right">'+(opts.right||'—')+'</div>'+
+    '</div>'+
+    (opts.rates?'<div class="m-rates">'+opts.rates+'</div>':'')+
     (vals?'<div class="m-vals">'+vals+'</div>':'')+
   '</div>';
 }
@@ -1431,41 +1480,44 @@ function renderMonitor(s){
   const mem=s.memory||{};
   const net=(s.network||[])[0]||{};
 
+  // CPU：环形进度 + 负载/核心次指标
   const cpuPct=+cpu.usage_percent||0;
-  const cpuHtml=mCardHTML({title:"CPU",percent:cpuPct,
-    right:cpuPct.toFixed(1)+"%",
+  const cpuHtml=mRingHTML({
+    ico:"🖥",title:"CPU",percent:cpuPct,
+    sub:"负载 "+(cpu.load1||0).toFixed(2),
     metrics:[
-      {k:"负载",v:(+cpu.load1||0).toFixed(2)},
+      {k:"5m",v:(cpu.load5||0).toFixed(2)},
       {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
     ]
   });
+  // 内存：环形进度 + 已用/总量
   const memPct=+mem.usage_percent||0;
-  const memHtml=mCardHTML({title:"内存",percent:memPct,
-    right:memPct.toFixed(1)+"%",
+  const memHtml=mRingHTML({
+    ico:"💾",title:"内存",percent:memPct,
+    sub:fmtBytes(+mem.used_bytes||0)+" / "+fmtBytes(+mem.total_bytes||0)
+  });
+  // 网络：上下行速率主指标 + 累计次指标。无百分比，用 mStatHTML
+  const netRates='<div class="m-rate"><span class="lbl">↓ 下行</span><span class="val">'+fmtBytes(+net.rx_rate||0)+'/s</span></div>'+
+                 '<div class="m-rate"><span class="lbl">↑ 上行</span><span class="val">'+fmtBytes(+net.tx_rate||0)+'/s</span></div>';
+  const netHtml=mStatHTML({
+    ico:"🌐",cls:"net",title:"网络",
+    right:fmtBytes((+net.rx_rate||0)+(+net.tx_rate||0))+"/s",
+    rates:netRates,
     metrics:[
-      {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
-      {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
+      {k:"累计↓",v:fmtBytes(+net.rx_bytes||0)},
+      {k:"累计↑",v:fmtBytes(+net.tx_bytes||0)}
     ]
   });
-  // 网络：后端基于两次采样做差计算 B/s 速率，首次请求为 0
-  const netDev=net.device==="__sum__"?"全部网卡":(net.device||"—");
-  const netHtml=mCardHTML({title:"网络",bar:false,
-    right:"↓"+fmtBytes(+net.rx_rate||0)+"/s ↑"+fmtBytes(+net.tx_rate||0)+"/s",
-    metrics:[
-      {k:"累计接收",v:fmtBytes(+net.rx_bytes||0)},
-      {k:"累计发送",v:fmtBytes(+net.tx_bytes||0)},
-      {k:"网卡",v:esc(netDev)}
-    ]
-  });
-  // 温度：取最高值作为核心温度展示（node_hwmon_temp_celsius）
+  // 温度：取最高值作为核心温度展示
   let maxTemp=0,tempName="";
   (s.temps||[]).forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;tempName=t.chip+"/"+t.name;}});
-  const tempHtml=mCardHTML({title:"温度",bar:false,
-    right:maxTemp>0?maxTemp.toFixed(1)+"°C":"无",
+  const tempHtml=mStatHTML({
+    ico:"🌡",title:"温度",
+    right:maxTemp>0?maxTemp.toFixed(1)+"°":"—",
     metrics:maxTemp>0?[
-      {k:"传感器",v:esc(tempName)},
-      {k:"数量",v:(s.temps||[]).length+"个"}
-    ]:[{k:"提示",v:"node_exporter 未启用 hwmon collector"}]
+      {k:"最高",v:maxTemp.toFixed(1)+"°C"},
+      {k:"传感器",v:(s.temps||[]).length+"个"}
+    ]:[{k:"提示",v:"无 hwmon"}]
   });
   box.innerHTML=cpuHtml+memHtml+netHtml+tempHtml;
 }
