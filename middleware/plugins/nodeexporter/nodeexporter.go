@@ -446,6 +446,13 @@ func isVirtualFS(fstype string) bool {
 	return false
 }
 
+// netCounterMax 单网卡累计 counter 合理性上限：1 EB（10^18 字节）。
+// 物理网卡不可能达到该量级。实测 node_exporter 偶发返回 1.8446744e+19
+// （接近 uint64 上限 1.8446744073709552e+19）的脏值，是 64 位 counter
+// 溢出/回绕中的中间态，聚合后 sumTx 飙到 16383 PB，前端显示"一会 MB 一会 PB"。
+// 超过该上限视为脏数据置 0，避免污染聚合与速率计算。
+const netCounterMax = 1e18
+
 func parseNet(metrics []metric) []netInfo {
 	rx := map[string]float64{}
 	tx := map[string]float64{}
@@ -455,12 +462,17 @@ func parseNet(metrics []metric) []netInfo {
 		if isVirtualNet(d) {
 			continue
 		}
+		v := m.value
+		// 脏数据守卫：负数/NaN/超过 1 EB 的 counter 都不是合法累计值
+		if v < 0 || v != v /* NaN */ || v > netCounterMax {
+			v = 0
+		}
 		switch m.name {
 		case "node_network_receive_bytes_total":
-			rx[d] = m.value
+			rx[d] = v
 			devs[d] = true
 		case "node_network_transmit_bytes_total":
-			tx[d] = m.value
+			tx[d] = v
 			devs[d] = true
 		}
 	}
