@@ -624,7 +624,21 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* ========= 工具 ========= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
-function fmtBytes(v){v=+v||0;const u=["B","KB","MB","GB","TB","PB"];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v>=100?0:1)+" "+u[i];}
+// fmtBytes 字节单位格式化。注意三处边界：
+// 1) NaN/undefined/null/字符串 → +v||0 归零，显示 "0.0 B"
+// 2) Infinity（counter 回绕/聚合溢出/解析异常）→ 不进入 while 循环会停在 PB 显示 "Infinity PB"，
+//    用户看到"一会 MB 一会 PB"就是这个。Number.isFinite 兜底显示 "—"。
+// 3) 负数（counter 回绕做差为负被某层透传）→ 不会进 while，显示 "-xxx B"，也归零。
+function fmtBytes(v){
+  v=+v;
+  // 非有限数（NaN/Infinity/-Infinity）→ 无法量化，显示占位符避免误导
+  if(!Number.isFinite(v))return "—";
+  if(v<0)v=0;
+  const u=["B","KB","MB","GB","TB","PB"];
+  let i=0;
+  while(v>=1024&&i<u.length-1){v/=1024;i++;}
+  return v.toFixed(v>=100?0:1)+" "+u[i];
+}
 function pct(v){return Math.max(0,Math.min(100,+v||0)).toFixed(1)+"%";}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1800);}
 function joinPath(base,name){base=base||"";name=name||"";if(!base)return name;return base.replace(/\/+$/,"")+"/"+name.replace(/^\/+/,"");}
