@@ -1188,12 +1188,15 @@ function loadDownloadTasks(){
       const ct=fmtBackupTime(t.created_at?Date.parse(t.created_at):0);
       const log=t.log?('<div class="dl-task-log">'+esc(t.log)+'</div>'):'';
       // 操作按钮：按状态显示可用动作
+      // 取消 = 停止进行中的下载（cancel action），删除 = 移除已结束任务的记录（clear-selected）
       const st=t.status;
       let acts='<div class="dl-actions">';
       if(st==="下载中"||st==="合并中"||st==="转换中")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'pause\')">暂停</button>';
       if(st==="已暂停")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'resume\')">恢复</button>';
-      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
-      if(st!=="下载中"&&st!=="合并中"&&st!=="转换中"&&st!=="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">删除</button>';
+      // 活跃任务 → 取消：停止下载（pause/resume 对已暂停也保留取消入口）
+      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中"||st==="等待FFmpeg")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
+      // 已结束任务 → 删除：清除记录（与取消区分，不再误调 cancel）
+      if(st==="已完成"||st==="失败"||st==="已取消")acts+='<button class="dl-act danger" onclick="deleteTask(\''+esc(tid)+'\')">删除</button>';
       acts+='</div>';
       return '<div class="dl-task"><div class="dl-task-head"><span class="dl-task-name">'+name+'</span><span class="dl-badge '+bc+'">'+esc(bl)+'</span></div><div class="dl-task-meta"><span>'+ct+'</span></div>'+log+acts+'</div>';
     }).join("");
@@ -1275,6 +1278,19 @@ function taskAction(tid,action){
     if(r.ok){toast(tip+" 已执行",1000);setTimeout(loadDownloadTasks,400);}
     else{toast(tip+" 失败：HTTP "+r.status,2000);}
   }).catch(e=>toast(tip+" 失败："+e.message,2000));
+}
+// 删除已结束任务的记录：调 /download/clear-selected 传 {ids:[tid]} 清除指定任务。
+// 与"取消"区分——取消是停止进行中的下载（taskAction cancel），删除是移除已结束的记录。
+function deleteTask(tid){
+  if(!tid)return;
+  if(!confirm("删除这条任务记录？"))return;
+  fetch("/portal/api/download/clear-selected",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ids:[tid]})
+  }).then(r=>{
+    if(r.ok){toast("已删除",1000);setTimeout(loadDownloadTasks,400);}
+    else{toast("删除失败：HTTP "+r.status,2000);}
+  }).catch(e=>toast("删除失败："+e.message,2000));
 }
 
 /* ========= 原生系统返回/侧滑返回 转发处理（避免滑动就退桌面） =========

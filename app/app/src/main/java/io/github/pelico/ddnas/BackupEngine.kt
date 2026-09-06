@@ -87,21 +87,30 @@ class BackupEngine(
             collect(root, "", all)
 
             // 增量过滤：只保留需要上传的文件
+            // - 失败黑名单：上次上传失败且文件未变更（size+mtime 一致）的直接跳过，
+            //   不浪费流量重试必然失败的文件（如云盘不支持的大文件）。
+            //   文件一旦修改（size/mtime 变了）自动移出黑名单，重新尝试。
             val toUpload = ArrayList<Pair<DocumentFile, String>>()
             var skipped = 0
+            var blacklisted = 0
             for ((file, rel) in all) {
                 val size = file.length()
                 val mtime = file.lastModified()
-                if (manifest.needUpload(rel, size, mtime)) {
-                    toUpload.add(file to rel)
-                } else {
-                    skipped++
+                when {
+                    manifest.isKnownFailed(rel, size, mtime) -> blacklisted++
+                    manifest.needUpload(rel, size, mtime) -> toUpload.add(file to rel)
+                    else -> skipped++
                 }
             }
 
             val total = toUpload.size
             if (total == 0) {
-                emit(BackupService.Progress.Done("无需备份（$skipped 个文件未变更）"))
+                val msg = buildString {
+                    append("无需备份（$skipped 个文件未变更")
+                    if (blacklisted > 0) append("，$blacklisted 个上次失败已跳过")
+                    append("）")
+                }
+                emit(BackupService.Progress.Done(msg))
                 return Result.Success
             }
 
@@ -149,12 +158,14 @@ class BackupEngine(
                 // 单文件最多重试 3 次，指数退避：1s → 2s → 4s
                 // 取消信号 / 4xx 客户端错误不重试，避免大文件白白重传一遍
                 var ok = false
+                var lastCode = 0
                 for (attempt in 0..2) {
                     if (BackupService.isCancelled()) break
                     var outcome: UploadOutcome? = null
                     try {
                         outcome = uploadFile(origin, cookie, dest, file, done, total)
                         ok = outcome.ok
+                        lastCode = outcome.code
                     } catch (e: CancelledException) {
                         // 用户取消：writeTo 循环已中断写入，立即停止，不再重试
                         emit(BackupService.Progress.Done("已取消（已传 $uploaded 个文件）"))
@@ -162,6 +173,7 @@ class BackupEngine(
                     } catch (e: Exception) {
                         Log_w("upload attempt ${attempt + 1} fail: $rel", e)
                         ok = false
+                        lastCode = 0
                     }
                     if (ok) break
                     // 4xx 客户端错误（401 登录失效/403 权限/413 文件过大等）：
@@ -181,6 +193,16 @@ class BackupEngine(
                 } else {
                     failed++
                     failedFiles.add(rel)
+                    // 永久错误加入失败黑名单：文件未变更的话下次备份直接跳过，
+                    // 不浪费流量重试必然失败的文件（如云盘不支持的大文件）。
+                    // - 4xx 客户端错误（413 文件过大/403 权限不足等；401 登录失效除外，
+                    //   那是临时态，重新登录后应重试）
+                    // - 500 业务失败（OpenList/存储驱动拒绝上传，如不支持大文件）
+                    // 网络异常（code=0）/ 5xx 网关错误（502/503/504）是临时问题，下次应重试。
+                    val isPermanent = (lastCode in 400..499 && lastCode != 401) || lastCode == 500
+                    if (isPermanent) {
+                        manifest.markFailed(rel, file.length(), file.lastModified())
+                    }
                 }
                 done++
                 emit(BackupService.Progress.Running(done, total, file.name ?: rel))
@@ -188,6 +210,7 @@ class BackupEngine(
             val msg = buildString {
                 append("备份完成：上传 $uploaded 个文件")
                 if (skipped + skippedRemote > 0) append("，跳过 ${skipped + skippedRemote} 个（未变更/远端已存在）")
+                if (blacklisted > 0) append("，$blacklisted 个上次失败已跳过")
                 if (failed > 0) append("，失败 $failed 个")
             }
             // 上报备份历史到中间件 SQLite

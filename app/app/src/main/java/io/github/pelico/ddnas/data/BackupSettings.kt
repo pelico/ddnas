@@ -53,11 +53,17 @@ class BackupStore(private val context: Context) {
  * 远端同步：备份完成后把 manifest 序列化成 JSON 上传到 <remoteBase>/.ddnas_manifest.json，
  * 下次备份前先下载并合并。这样 app 重装/换设备后不丢失增量历史，不必全量重传。
  * 多设备共享同一远端目录时不需要显式隔离——size+mtime 天然区分不同文件。
+ *
+ * 失败黑名单：上传失败的文件（4xx 永久错误，如文件过大/空间不足/权限不足）
+ * 记录到 failed 命名空间，下次备份时如果文件未变更直接跳过，不浪费流量。
+ * 文件修改后（size/mtime 变了）自动移出黑名单，重新尝试。
  */
 class BackupManifest(context: Context, treeUri: String, remoteBase: String) {
     private val prefs = context.getSharedPreferences("ddnas_backup_manifest", 0)
     // 用 treeUri + remoteBase 的 hashCode 做命名空间前缀，避免不同目录树/不同目标位置的同名文件误判
     private val prefix = treeUri.hashCode().toString(16) + ":" + remoteBase.hashCode().toString(16) + ":"
+    // 失败黑名单前缀：和已上传条目分开存储，互不干扰
+    private val failedPrefix = prefix + "FAILED:"
 
     /** 返回文件是否需要上传（size 或 mtime 变了）。 */
     fun needUpload(relPath: String, size: Long, mtime: Long): Boolean {
@@ -67,26 +73,55 @@ class BackupManifest(context: Context, treeUri: String, remoteBase: String) {
         return parts[0].toLongOrNull() != size || parts[1].toLongOrNull() != mtime
     }
 
+    /** 文件是否在失败黑名单中（且文件未变更）。
+     *  返回 true 表示"上次失败了，文件没改过，不要重试，跳过"。 */
+    fun isKnownFailed(relPath: String, size: Long, mtime: Long): Boolean {
+        val prev = prefs.getString(failedPrefix + relPath, null) ?: return false
+        val parts = prev.split("|")
+        if (parts.size != 2) return false
+        // 文件未变更（size+mtime 都一样）才认为仍会失败，跳过
+        return parts[0].toLongOrNull() == size && parts[1].toLongOrNull() == mtime
+    }
+
     fun markUploaded(relPath: String, size: Long, mtime: Long) {
-        prefs.edit().putString(prefix + relPath, "$size|$mtime").apply()
+        val editor = prefs.edit()
+        editor.putString(prefix + relPath, "$size|$mtime")
+        // 上传成功 → 从黑名单移除（如果之前失败过）
+        editor.remove(failedPrefix + relPath)
+        editor.apply()
+    }
+
+    /** 标记文件为上传失败（永久错误，如 4xx）。
+     *  下次备份如果文件未变更会跳过，避免浪费流量重试必然失败的文件。 */
+    fun markFailed(relPath: String, size: Long, mtime: Long) {
+        prefs.edit().putString(failedPrefix + relPath, "$size|$mtime").apply()
     }
 
     fun clear() = prefs.edit().clear().apply()
 
     /** 序列化当前命名空间的条目为 JSON，用于上传到远端做 manifest 同步。
-     * 格式: {"version":1,"entries":{"relPath":"size|mtime",...}} */
+     * 格式: {"version":2,"entries":{"relPath":"size|mtime",...},"failed":{"relPath":"size|mtime",...}} */
     fun toJson(): String {
         val entries = org.json.JSONObject()
+        val failed = org.json.JSONObject()
         val all = prefs.all
         for ((k, v) in all) {
-            if (k.startsWith(prefix) && v is String) {
-                val rel = k.substring(prefix.length)
-                entries.put(rel, v)
+            if (v !is String) continue
+            when {
+                k.startsWith(failedPrefix) -> {
+                    val rel = k.substring(failedPrefix.length)
+                    failed.put(rel, v)
+                }
+                k.startsWith(prefix) -> {
+                    val rel = k.substring(prefix.length)
+                    entries.put(rel, v)
+                }
             }
         }
         val json = org.json.JSONObject()
-        json.put("version", 1)
+        json.put("version", 2)
         json.put("entries", entries)
+        json.put("failed", failed)
         return json.toString()
     }
 
@@ -96,16 +131,33 @@ class BackupManifest(context: Context, treeUri: String, remoteBase: String) {
     fun mergeFromJson(json: String) {
         try {
             val obj = org.json.JSONObject(json)
-            val entries = obj.optJSONObject("entries") ?: return
             val editor = prefs.edit()
-            val keys = entries.keys()
-            while (keys.hasNext()) {
-                val rel = keys.next()
-                val valStr = entries.optString(rel, "")
-                if (valStr.isEmpty()) continue
-                val localKey = prefix + rel
-                if (prefs.getString(localKey, null) == null) {
-                    editor.putString(localKey, valStr)
+            // 合并已上传条目
+            val entries = obj.optJSONObject("entries")
+            if (entries != null) {
+                val keys = entries.keys()
+                while (keys.hasNext()) {
+                    val rel = keys.next()
+                    val valStr = entries.optString(rel, "")
+                    if (valStr.isEmpty()) continue
+                    val localKey = prefix + rel
+                    if (prefs.getString(localKey, null) == null) {
+                        editor.putString(localKey, valStr)
+                    }
+                }
+            }
+            // 合并失败黑名单
+            val failed = obj.optJSONObject("failed")
+            if (failed != null) {
+                val fkeys = failed.keys()
+                while (fkeys.hasNext()) {
+                    val rel = fkeys.next()
+                    val valStr = failed.optString(rel, "")
+                    if (valStr.isEmpty()) continue
+                    val localKey = failedPrefix + rel
+                    if (prefs.getString(localKey, null) == null) {
+                        editor.putString(localKey, valStr)
+                    }
                 }
             }
             editor.apply()
