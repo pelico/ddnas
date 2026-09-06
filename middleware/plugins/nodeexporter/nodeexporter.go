@@ -402,21 +402,19 @@ func parseFS(metrics []metric) []fsInfo {
 	free := map[string]float64{}
 	dev := map[string]string{}
 	fs := map[string]string{}
-	// 按 device 去重：同一底层设备只保留首个非 bind mount 的 mountpoint。
-	// Docker 容器会把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf
-	// bind mount 进容器，node_exporter 看到同一 /dev/xxx 挂到 3 个 mountpoint，
+	// 按 device 去重：Docker 容器把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf
+	// bind mount 进容器，node_exporter 看到同一 /dev/xxx 挂到 3 个 mountpoint。
 	// 用 mountpoint 作 key 会把同一磁盘显示成 3 个，前端累加容量虚高 3 倍。
+	// 改用 device 去重，同 device 只保留首个 mountpoint。
+	// 不能过滤 bind mount 本身——容器环境里物理盘可能只通过 bind mount 暴露，
+	// 全过滤掉会导致 NAS 卡片存储信息完全不显示。
 	seenDev := map[string]bool{}
 	for _, m := range metrics {
 		switch m.name {
 		case "node_filesystem_size_bytes":
 			mp := m.labels["mountpoint"]
 			d := m.labels["device"]
-			// 过滤容器 bind mount：这些是宿主文件被 bind 进容器，非真实磁盘挂载
-			if isBindMount(mp) {
-				continue
-			}
-			// 同一 device 只保留首次出现的 mountpoint（同一底层盘可能 bind 多处）
+			// 同一 device 只保留首次出现的 mountpoint
 			if d != "" && seenDev[d] {
 				continue
 			}
@@ -462,18 +460,6 @@ func parseFS(metrics []metric) []fsInfo {
 		})
 	}
 	return out
-}
-
-// isBindMount 判断是否为容器 bind mount 的目标文件。
-// Docker 把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf bind 进容器，
-// node_exporter 看到同一底层 device 挂到这些 mountpoint，导致 parseFS
-// 把同一磁盘重复计数。这些不是真实磁盘挂载，过滤掉。
-func isBindMount(mp string) bool {
-	switch mp {
-	case "/etc/hostname", "/etc/hosts", "/etc/resolv.conf":
-		return true
-	}
-	return false
 }
 
 // isVirtualFS 判断是否为虚拟/临时文件系统，这类不应计入真实存储容量。
