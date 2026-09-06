@@ -504,17 +504,21 @@ func parseNet(metrics []metric) []netInfo {
 		if isVirtualNet(d) {
 			continue
 		}
+		// 对 rx/tx 分别校验：实测 eth0 的 tx_bytes=1.84e19（uint64 溢出脏值）
+		// 但 rx_bytes=1.5e9 正常。旧逻辑整张网卡一起置 0，导致 eth0 的 rx 也被
+		// 丢弃 → 累计接收丢失主网卡数据。现按字段独立校验，只置脏的，保留正常的。
 		v := m.value
-		// 脏数据守卫：负数/NaN/超过 1 EB 的 counter 都不是合法累计值
-		if v < 0 || v != v /* NaN */ || v > netCounterMax {
-			v = 0
-		}
+		isDirty := v < 0 || v != v /* NaN */ || v > netCounterMax
 		switch m.name {
 		case "node_network_receive_bytes_total":
-			rx[d] = v
+			if !isDirty {
+				rx[d] = v
+			}
 			devs[d] = true
 		case "node_network_transmit_bytes_total":
-			tx[d] = v
+			if !isDirty {
+				tx[d] = v
+			}
 			devs[d] = true
 		}
 	}
