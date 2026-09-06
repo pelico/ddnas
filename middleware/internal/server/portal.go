@@ -538,7 +538,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <div class="dl-bar">
     <button class="back" onclick="setTab('home')" title="返回首页">←</button>
     <div class="dl-title">下载任务</div>
-    <button class="dl-refresh" onclick="loadDownloadTasks()" title="刷新">↻</button>
+    <button class="dl-refresh" onclick="refreshDownloadNow()" title="刷新">↻</button>
   </div>
   <div class="dl-page">
     <!-- 提交表单：url 必填，DDM3U8 会从文本里正则识别多个 m3u8 链接 -->
@@ -1112,12 +1112,31 @@ function dlStatusBadge(s){
   if(s==="失败"||s==="已取消")return ["error",s==="已取消"?"取消":"失败"];
   return ["",s];
 }
+// 下载任务轮询：仿 DDM3U8 原项目 setTimeout 链式轮询。
+// 有活跃任务 2s 刷一次（看实时进度 log + 状态变更），无活跃 10s 刷一次。
+// 页面隐藏(document.hidden)或离开 download 页(listEl 不存在)自动停，
+// 避免后台空跑 / WebView 切走后继续请求。
+const DL_ACTIVE_INTERVAL=2000, DL_IDLE_INTERVAL=10000;
+const DL_ACTIVE_STATUSES=["排队中","下载中","合并中","等待FFmpeg","转换中"];
+let dlRefreshTimer=null, dlRefreshInFlight=false;
 function loadDownloadTasks(){
   const listEl=document.getElementById("dl-list");
   const activeEl=document.getElementById("dl-active");
   const maxEl=document.getElementById("dl-max");
-  if(!listEl)return; // 不在 download 页
-  listEl.innerHTML='<div class="dl-empty"><span class="spin"></span>加载中…</div>';
+  if(!listEl){ // 不在 download 页 → 停轮询
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+    return;
+  }
+  // 页面隐藏不空刷（visibilitychange 回到前台会触发 refreshNow）
+  if(document.hidden){
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+    return;
+  }
+  // 上一次还没回 → 跳过这次，等下一次 timer
+  if(dlRefreshInFlight)return;
+  if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  dlRefreshInFlight=true;
+  let nextDelay=DL_IDLE_INTERVAL;
   fetch("/portal/api/download/tasks").then(r=>{
     if(!r.ok)throw new Error("HTTP "+r.status+(r.status===404?"（下载适配器未启用）":""));
     return r.json();
@@ -1127,6 +1146,9 @@ function loadDownloadTasks(){
     // tasks 是对象 {id: task}，task_order 是 id 数组（按 created_at 倒序）
     const order=resp.task_order||[];
     const tasks=resp.tasks||{};
+    // 有活跃任务 → 缩短下一次轮询间隔，看实时进度
+    nextDelay=order.some(tid=>DL_ACTIVE_STATUSES.includes((tasks[tid]||{}).status||""))
+      ? DL_ACTIVE_INTERVAL : DL_IDLE_INTERVAL;
     if(!order.length){listEl.innerHTML='<div class="dl-empty">暂无下载任务</div>';return;}
     listEl.innerHTML=order.map(function(tid){
       const t=tasks[tid]||{};
@@ -1146,8 +1168,30 @@ function loadDownloadTasks(){
     }).join("");
   }).catch(e=>{
     listEl.innerHTML='<div class="dl-empty">加载失败：'+esc(e.message)+'</div>';
+    // 失败时用短间隔重试，恢复后自动回到正常节奏
+    nextDelay=DL_ACTIVE_INTERVAL;
+  }).finally(()=>{
+    dlRefreshInFlight=false;
+    // 链式安排下一次刷新；离开页面/隐藏会在下次 loadDownloadTasks 入口断
+    if(listEl && !document.hidden){
+      dlRefreshTimer=setTimeout(loadDownloadTasks, nextDelay);
+    }
   });
 }
+// 手动"立即刷新"按钮：打断当前 timer，马上拉一次
+function refreshDownloadNow(){
+  if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  loadDownloadTasks();
+}
+// 页面可见性变化：回到前台立即刷一次，隐藏时停轮询
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden){
+    // 在 download 页才刷
+    if(document.getElementById("dl-list")) refreshDownloadNow();
+  }else{
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  }
+});
 // 提交下载：构造 form-data，DDM3U8 /down 接口要求表单字段而非 JSON
 function submitDownload(){
   const urlEl=document.getElementById("dl-url");
