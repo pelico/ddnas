@@ -639,6 +639,9 @@ function fmtBytes(v){
   v=+v;
   // 非有限数（NaN/Infinity/-Infinity）→ 无法量化，显示占位符避免误导
   if(!Number.isFinite(v))return "—";
+  // 脏 counter（>1e18，如 eth0 tx uint64 溢出值 1.84e19）→ 绝对值不可信，显示 "—"
+  // 但增量速率由后端 computeNetRate 计算，不受影响
+  if(v>1e18)return "—";
   if(v<0)v=0;
   const u=["B","KB","MB","GB","TB","PB"];
   let i=0;
@@ -1456,12 +1459,13 @@ function renderMonitor(s){
       {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
     ]
   });
-  // 内存：横条进度 + 主数值(已用/总量)
+  // 内存：横条进度 + 主数值(%) + 可用容量
   const memPct=+mem.usage_percent||0;
   const memHtml=mStatHTML({
     ico:"💾",title:"内存",percent:memPct,
     right:memPct.toFixed(0)+"%",
-    sub:fmtBytes(+mem.used_bytes||0)+" / "+fmtBytes(+mem.total_bytes||0)
+    sub:fmtBytes(+mem.used_bytes||0)+" / "+fmtBytes(+mem.total_bytes||0),
+    metrics:[{k:"可用",v:fmtBytes((+mem.total_bytes||0)-(+mem.used_bytes||0))}]
   });
   // 网络：上下行速率并排 + 累计次指标。无百分比，无横条
   const netRates='<div class="m-rate"><span class="lbl">↓ 下行</span><span class="val">'+fmtBytes(+net.rx_rate||0)+'/s</span></div>'+

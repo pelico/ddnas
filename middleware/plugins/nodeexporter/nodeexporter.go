@@ -406,14 +406,14 @@ func parseFS(metrics []metric) []fsInfo {
 	// bind mount 进容器，node_exporter 看到同一 /dev/xxx 挂到 3 个 mountpoint。
 	// 用 mountpoint 作 key 会把同一磁盘显示成 3 个，前端累加容量虚高 3 倍。
 	// 改用 device 去重，同 device 只保留首个 mountpoint。
-	// 不能过滤 bind mount 本身——容器环境里物理盘可能只通过 bind mount 暴露，
-	// 全过滤掉会导致 NAS 卡片存储信息完全不显示。
 	seenDev := map[string]bool{}
+	// 第一遍：收集 size + free，不依赖顺序（实测 free_bytes 在 size_bytes 之前出现，
+	// 旧代码的 if size[mp] exists 守卫导致 free 永远不被记录 → 可用容量显示 0）
 	for _, m := range metrics {
+		mp := m.labels["mountpoint"]
+		d := m.labels["device"]
 		switch m.name {
 		case "node_filesystem_size_bytes":
-			mp := m.labels["mountpoint"]
-			d := m.labels["device"]
 			// 同一 device 只保留首次出现的 mountpoint
 			if d != "" && seenDev[d] {
 				continue
@@ -425,11 +425,8 @@ func parseFS(metrics []metric) []fsInfo {
 			dev[mp] = d
 			fs[mp] = m.labels["fstype"]
 		case "node_filesystem_free_bytes":
-			mp := m.labels["mountpoint"]
-			// 只记录已注册 mountpoint 的 free，避免孤儿 free 污染
-			if _, ok := size[mp]; ok {
-				free[mp] = m.value
-			}
+			// 无条件记录 free，不依赖 size 是否已存在（顺序不保证）
+			free[mp] = m.value
 		}
 	}
 	var out []fsInfo
@@ -490,21 +487,18 @@ func parseNet(metrics []metric) []netInfo {
 		if isVirtualNet(d) {
 			continue
 		}
-		// 对 rx/tx 分别校验：实测 eth0 的 tx_bytes=1.84e19（uint64 溢出脏值）
-		// 但 rx_bytes=1.5e9 正常。旧逻辑整张网卡一起置 0，导致 eth0 的 rx 也被
-		// 丢弃 → 累计接收丢失主网卡数据。现按字段独立校验，只置脏的，保留正常的。
 		v := m.value
-		isDirty := v < 0 || v != v /* NaN */ || v > netCounterMax
+		// 不过滤脏 counter（如 eth0 tx=1.84e19 uint64 溢出值）：
+		// - 绝对值错（16 EB），但增量是对的（counter 仍在涨）
+		// - computeNetRate 用增量算速率，脏绝对值不影响速率
+		// - 前端 fmtBytes 对 > 1e18 的值显示 "—"，避免显示 16383 PB
+		// - counter 回绕时 computeNetRate 的 n.TxBytes < prev.tx 守卫会跳过那一轮
 		switch m.name {
 		case "node_network_receive_bytes_total":
-			if !isDirty {
-				rx[d] = v
-			}
+			rx[d] = v
 			devs[d] = true
 		case "node_network_transmit_bytes_total":
-			if !isDirty {
-				tx[d] = v
-			}
+			tx[d] = v
 			devs[d] = true
 		}
 	}
