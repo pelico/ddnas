@@ -1161,7 +1161,7 @@ function submitDownload(){
   if(goBtn){goBtn.disabled=true;goBtn.textContent="提交中…";}
   // 路径安全化：name/sub_path 用于 DDM3U8 拼临时目录与最终文件路径，
   // 含 / \ .. 空格开头等会让 mkdir 失败或越权，需清洗。
-  function safeName(s){return (s||"").trim().replace(/[\/\\]+/g,"_").replace(/^\.\.+/g,"").replace(/^\s+/,"").replace(/\s+$/g");}
+  function safeName(s){return (s||"").trim().replace(/[\/\\]+/g,"_").replace(/^\.\.+/g,"").replace(/^\s+/,"").replace(/\s+$/g,"");}
   function safePath(s){return (s||"").trim().replace(/^[\/\\]+/,"").replace(/[\/\\]+/g,"/").replace(/^\.\.+/g,"");}
   const name=safeName(nameEl?nameEl.value:"")||"video";
   const subPath=subEl?safePath(subEl.value):"";
