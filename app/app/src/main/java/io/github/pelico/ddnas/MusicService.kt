@@ -62,6 +62,11 @@ class MusicService : Service() {
         }
     }
 
+    // 睡眠定时器：到点暂停播放（不 stop，保留播放位置，用户醒了可继续）。
+    // 用同一个 progressHandler（主线程 Looper），与进度推送共用线程，无需额外 Handler。
+    private var sleepRunnable: Runnable? = null
+    private var sleepEndTime: Long = 0  // 0=未设定；>0=到点时间戳（System.currentTimeMillis）
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -136,8 +141,37 @@ class MusicService : Service() {
         if (dur > 0) p.seekTo((dur * percent / 100).toLong())
     }
 
+    /**
+     * 睡眠定时器：[minutes] 分钟后暂停播放。
+     * - 暂停而非停止：保留播放位置，用户醒了可点播放继续
+     * - Service 持有 WakeLock，即使屏幕熄灭/Doze 到点也一定执行
+     * - 设定后通过 notifyState() 通知 UI 显示倒计时
+     */
+    fun setSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        if (minutes <= 0) return
+        val r = Runnable {
+            pausePlayer()
+            sleepRunnable = null
+            sleepEndTime = 0
+            notifyState()
+        }
+        sleepRunnable = r
+        sleepEndTime = System.currentTimeMillis() + minutes * 60_000L
+        progressHandler.postDelayed(r, minutes * 60_000L)
+        notifyState()
+    }
+
+    fun cancelSleepTimer() {
+        sleepRunnable?.let { progressHandler.removeCallbacks(it) }
+        sleepRunnable = null
+        sleepEndTime = 0
+        notifyState()
+    }
+
     fun stopMusic() {
         progressHandler.removeCallbacks(progressRunnable)
+        cancelSleepTimer()
         player?.stop()
         releaseLocks()
         abandonAudioFocus()
@@ -152,7 +186,8 @@ class MusicService : Service() {
         val pos = p?.currentPosition ?: 0
         val dur = p?.duration ?: 0
         val idx = p?.currentMediaItemIndex ?: currentIndex
-        return """{"playing":$playing,"index":$idx,"position":$pos,"duration":$dur}"""
+        val sleepMs = if (sleepEndTime > 0) (sleepEndTime - System.currentTimeMillis()).coerceAtLeast(0) else 0
+        return """{"playing":$playing,"index":$idx,"position":$pos,"duration":$dur,"sleepMs":$sleepMs}"""
     }
 
     // ---------- 内部 ----------
@@ -321,6 +356,8 @@ class MusicService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         progressHandler.removeCallbacks(progressRunnable)
+        sleepRunnable?.let { progressHandler.removeCallbacks(it) }
+        sleepRunnable = null
         player?.release()
         player = null
         mediaSession?.release()

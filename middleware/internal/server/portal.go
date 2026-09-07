@@ -585,6 +585,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <button class="m-btn play" id="m-playbtn" onclick="musicToggle()" title="播放/暂停">▶</button>
     <button class="m-btn" onclick="musicNext()" title="下一首">⏭</button>
     <button class="m-btn" onclick="musicToggleList()" title="播放列表">≡</button>
+    <button class="m-btn" id="m-sleep" onclick="musicSleepMenu()" title="睡眠定时">🌙</button>
   </div>
   <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
 </div>
@@ -1743,10 +1744,65 @@ function musicToggleList(){
 }
 function musicClose(){
   if(typeof ddnas!=="undefined"&&typeof ddnas.musicControl==="function"){try{ddnas.musicControl("stop");}catch(e){}}
+  if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){try{ddnas.setSleepTimer(0);}catch(e){}}
   if(musicAudio){musicAudio.pause();musicAudio.src="";}
   musicPlaying=false;musicPlaylist=[];musicIndex=0;
+  musicSleepMs=0;updateSleepBtn();
   document.getElementById("music-player").style.display="none";
   document.getElementById("music-list").classList.remove("show");
+}
+// 睡眠定时器：弹窗选时长，到点暂停播放
+// App 端：ddnas.setSleepTimer → MusicService 持 WakeLock 执行，息屏也到点停
+// 浏览器端：JS setTimeout fallback（页面不能关，否则失效）
+let musicSleepMs=0;     // 剩余毫秒（0=未设定）
+let musicSleepTimer=null; // 浏览器端 setTimeout 句柄
+// 弹窗选时长：15/30/60/取消
+function musicSleepMenu(){
+  const opts=["15 分钟","30 分钟","60 分钟","取消定时"];
+  const choice=prompt("睡眠定时（到点暂停播放）",opts.join("\n"));
+  if(choice===null)return;
+  let mins=0;
+  if(choice.indexOf("15")!==-1)mins=15;
+  else if(choice.indexOf("30")!==-1)mins=30;
+  else if(choice.indexOf("60")!==-1)mins=60;
+  if(mins>0){
+    if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){
+      try{ddnas.setSleepTimer(mins);}catch(e){}
+    }
+    musicSleepMs=mins*60*1000;
+    if(musicSleepTimer){clearTimeout(musicSleepTimer);musicSleepTimer=null;}
+    // 浏览器端 fallback：无 App 桥时用 setTimeout
+    if(typeof ddnas==="undefined"||typeof ddnas.setSleepTimer!=="function"){
+      musicSleepTimer=setTimeout(function(){
+        if(musicAudio){musicAudio.pause();}
+        musicPlaying=false;updateMusicBtn();
+        musicSleepMs=0;updateSleepBtn();
+        toast("睡眠定时已到，播放已暂停");
+      },mins*60*1000);
+    }
+    updateSleepBtn();
+    toast(mins+"分钟后暂停播放");
+  }else{
+    if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){
+      try{ddnas.setSleepTimer(0);}catch(e){}
+    }
+    if(musicSleepTimer){clearTimeout(musicSleepTimer);musicSleepTimer=null;}
+    musicSleepMs=0;
+    updateSleepBtn();
+    toast("已取消睡眠定时");
+  }
+}
+function updateSleepBtn(){
+  const el=document.getElementById("m-sleep");
+  if(!el)return;
+  if(musicSleepMs>0){
+    const mins=Math.ceil(musicSleepMs/60000);
+    el.textContent="🌙"+mins+"m";
+    el.style.color="var(--accent)";
+  }else{
+    el.textContent="🌙";
+    el.style.color="";
+  }
 }
 function fmtTime(s){s=Math.floor(s||0);const m=Math.floor(s/60),ss=s%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss;}
 
@@ -1764,6 +1820,11 @@ function onMusicStateChange(json){
       // 拖动中不回写进度条，否则会把用户正在拖的滑块弹回当前位置
       if(!musicSeeking) document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
       document.getElementById("m-meta").textContent=fmtTime(s.position/1000)+" / "+fmtTime(s.duration/1000);
+    }
+    // 睡眠定时器状态同步：Service 设定/到点/取消后通知 UI
+    if(typeof s.sleepMs==="number"){
+      musicSleepMs=s.sleepMs;
+      updateSleepBtn();
     }
   }catch(e){}
 }

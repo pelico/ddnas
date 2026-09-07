@@ -503,6 +503,18 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { MusicService.instance?.seekToPercent(percent) }
         }
 
+        /** 睡眠定时器：minutes 分钟后暂停播放。0=取消定时。 */
+        @JavascriptInterface
+        fun setSleepTimer(minutes: Int) {
+            runOnUiThread {
+                if (minutes <= 0) {
+                    MusicService.instance?.cancelSleepTimer()
+                } else {
+                    MusicService.instance?.setSleepTimer(minutes)
+                }
+            }
+        }
+
         /** 返回当前播放状态 JSON：{playing,index,position,duration}。
          *  同步在主线程执行（binder 线程阻塞等待结果，最多 1s 超时）。 */
         @JavascriptInterface
