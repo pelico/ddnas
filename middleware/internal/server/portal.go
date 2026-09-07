@@ -458,6 +458,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     </div>
     <div class="crumb" id="crumb"></div>
   </div>
+  <div id="dir-actions" style="padding:6px 14px 2px;display:flex;gap:8px;flex-wrap:wrap">
+    <button id="add-dir-audio" class="dl-act" style="display:none" onclick="addCurDirAudios()">＋ 把此目录音频加入播放列表</button>
+  </div>
   <div id="files-body">
     <div class="loading"><span class="spin"></span>加载中…</div>
   </div>
@@ -1576,6 +1579,9 @@ let filesLoadedEver=false;
 function loadFiles(p){
   curFiles=p||"";filesLoadedEver=true;
   const body=document.getElementById("files-body");
+  // 加载新目录时先隐藏整目录加入按钮，避免旧目录残留
+  const addBtn0=document.getElementById("add-dir-audio");
+  if(addBtn0)addBtn0.style.display="none";
   const pathEl=document.getElementById("file-path");
   pathEl.textContent="/"+(curFiles||"");
   const upBtn=document.getElementById("up-btn");
@@ -1601,6 +1607,10 @@ function loadFiles(p){
       if(da!==db)return db-da;return String(a.name||"").localeCompare(String(b.name||""));
     });
     curItems=items;  // 存当前目录文件项，供音乐播放器生成同目录播放列表
+    // 此目录含音频时显示「整目录加入播放列表」按钮
+    const hasAudio=items.some(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
+    const addBtn=document.getElementById("add-dir-audio");
+    if(addBtn)addBtn.style.display=hasAudio?"":"none";
     if(!items.length){body.innerHTML='<div class="empty">空目录</div>';return;}
     body.innerHTML='<div class="flist">'+items.map(function(it){
       const name=esc(it.name||"");
@@ -1846,6 +1856,23 @@ function removeMusicPageItem(i){
   list.splice(i,1);
   saveMusicPageList(list);
   renderMusicPageList();
+}
+// 把当前目录所有音频加入播放列表（去重，跳过已存在）
+function addCurDirAudios(){
+  if(!curItems||!curItems.length){toast("当前目录为空");return;}
+  const audios=curItems.filter(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
+  if(!audios.length){toast("此目录没有音频文件");return;}
+  const list=getMusicPageList();
+  let added=0,skipped=0;
+  audios.forEach(it=>{
+    const rel=joinPath(curFiles,it.name||"");
+    if(list.some(a=>a.rel===rel)){skipped++;return;}
+    list.push({name:it.name||"未知",rel:rel,url:streamUrl(rel)});
+    added++;
+  });
+  saveMusicPageList(list);
+  if(curTab==="music")renderMusicPageList();
+  toast("已加入 "+added+" 首"+(skipped>0?"，跳过已存在 "+skipped+" 首":""));
 }
 function clearMusicPageList(){
   const list=getMusicPageList();
