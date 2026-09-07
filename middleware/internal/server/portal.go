@@ -340,7 +340,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
   background:var(--card);border-top:1px solid var(--bd);
-  display:grid;grid-template-columns:repeat(3,1fr);
+  display:grid;grid-template-columns:repeat(4,1fr);
   padding-bottom:env(safe-area-inset-bottom);
 }
 .tabbar button{
@@ -391,6 +391,25 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .toast.on{opacity:1}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted2);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== 睡眠定时选择弹窗（替代 prompt 文本输入） ===== */
+.sleep-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
+.sleep-card{background:var(--card);border-radius:16px;width:calc(100% - 48px);max-width:320px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+.sleep-head{padding:16px;text-align:center;font-size:15px;font-weight:600;border-bottom:1px solid var(--bd)}
+.sleep-opts{padding:6px 0}
+.sleep-opt{display:block;width:100%;padding:14px 0;text-align:center;font-size:15px;border:none;background:none;color:var(--fg);border-bottom:1px solid var(--bd)}
+.sleep-opt:active{background:var(--surface2)}
+.sleep-opt:last-child{border-bottom:none}
+.sleep-opt.cancel{color:var(--muted);font-size:14px}
+
+/* ===== 播放页列表项 ===== */
+.mp-item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.mp-item:active{opacity:.8}
+.mp-item .mp-ic{font-size:18px;opacity:.8}
+.mp-item .mp-nm{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-item .mp-sub{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-item .mp-del{font-size:18px;color:var(--err);background:none;border:none;padding:4px 8px;cursor:pointer}
+.mp-item .mp-del:active{opacity:.6}
 </style>
 </head>
 <body>
@@ -561,10 +580,35 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   </div>
 </section>
 
+<!-- ========== 播放页：独立 tab，从云盘添加音频、清空列表、播放控制 ========== -->
+<section id="view-music" class="hidden">
+  <div class="dl-bar">
+    <button class="back" onclick="setTab('home')" title="返回首页">←</button>
+    <div class="dl-title">播放列表</div>
+    <button class="dl-refresh" onclick="renderMusicPageList()" title="刷新">↻</button>
+  </div>
+  <div class="dl-page">
+    <div class="dl-submit">
+      <div style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted);margin-bottom:6px">
+        <span>共 <b id="mp-count">0</b> 首</span>
+        <span style="flex:1"></span>
+        <button class="dl-go" style="padding:6px 12px;font-size:12px" onclick="setTab('files')">从云盘添加</button>
+        <button class="dl-go" style="padding:6px 12px;font-size:12px;background:var(--surface2);color:var(--fg)" onclick="clearMusicPageList()">清空</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.5">
+        在「文件」中点击音频文件可加入此列表（持久保存，重启不丢）。
+        已加入的歌曲在此页面集中播放/移除。
+      </div>
+    </div>
+    <div class="dl-list" id="mp-list"><div class="dl-empty">暂无歌曲，从「文件」添加</div></div>
+  </div>
+</section>
+
 <!-- ========== 底部 Tab ========== -->
 <nav class="tabbar">
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
+  <button id="tab-music" onclick="setTab('music')"><span class="ic">🎵</span><span class="lb">播放</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
 
@@ -590,6 +634,20 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
 </div>
 <div class="music-list" id="music-list"></div>
+
+<!-- 睡眠定时选择弹窗（点击式，替代 prompt） -->
+<div class="sleep-modal" id="sleep-modal" style="display:none" onclick="closeSleepMenu()">
+  <div class="sleep-card" onclick="event.stopPropagation()">
+    <div class="sleep-head">🌙 睡眠定时</div>
+    <div class="sleep-opts">
+      <button class="sleep-opt" onclick="pickSleep(15)">15 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(30)">30 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(45)">45 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(60)">60 分钟</button>
+      <button class="sleep-opt cancel" onclick="pickSleep(0)">取消定时</button>
+    </div>
+  </div>
+</div>
 
 <div id="toast" class="toast"></div>
 
@@ -681,13 +739,13 @@ if(typeof ddnas==="undefined"){
 let curTab="home";
 function setTab(t){
   curTab=t;
-  // view 容器：含 download（非 tabbar 页，从首页宫格进入）
-  ["home","files","me","download"].forEach(k=>{
+  // view 容器：含 download/music（download 非 tabbar 页，从首页宫格进入）
+  ["home","files","me","download","music"].forEach(k=>{
     const el=document.getElementById("view-"+k);
     if(el)el.classList.toggle("hidden",k!==t);
   });
-  // tabbar 高亮：只有 home/files/me 三栏，download 不高亮任何 tab
-  ["home","files","me"].forEach(k=>{
+  // tabbar 高亮：home/files/music/me 四栏，download 不高亮任何 tab
+  ["home","files","music","me"].forEach(k=>{
     const el=document.getElementById("tab-"+k);
     if(el)el.classList.toggle("on",k===t);
   });
@@ -695,6 +753,7 @@ function setTab(t){
   if(t==="files"&&!filesLoadedEver)loadFiles("");
   if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();loadBackupHistory();}
   if(t==="download")loadDownloadTasks();
+  if(t==="music")renderMusicPageList();
   // 滚动回到顶部
   window.scrollTo({top:0,behavior:"instant"});
 }
@@ -1558,11 +1617,13 @@ function loadFiles(p){
       var kind=mediaExt(it.name||"");
       var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
       var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
-      var btn=(kind==="video"||kind==="audio")
+      var btn=(kind==="video")
         ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button>'
-        :(kind==="image"
-          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
-          :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>');
+        :(kind==="audio"
+          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button><button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="addmusic" title="加入播放列表" style="min-width:36px">＋</button>'
+          :(kind==="image"
+            ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
+            :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>'));
       return '<div class="fitem" data-type="file">'+
         '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
     }).join("")+"</div>";
@@ -1579,6 +1640,11 @@ function loadFiles(p){
     body.querySelectorAll('button[data-type="play"]').forEach(b=>{
       b.addEventListener("click",e=>{
         e.stopPropagation();play(b.dataset.rel||"");
+      });
+    });
+    body.querySelectorAll('button[data-type="addmusic"]').forEach(b=>{
+      b.addEventListener("click",e=>{
+        e.stopPropagation();addMusicPageItem(b.dataset.rel||"",b.dataset.name||"");
       });
     });
     body.querySelectorAll('button[data-type="view"]').forEach(b=>{
@@ -1751,20 +1817,83 @@ function musicClose(){
   document.getElementById("music-player").style.display="none";
   document.getElementById("music-list").classList.remove("show");
 }
+
+/* ========= 持久化播放列表（Play 栏，localStorage 保存，重启不丢） ========= */
+// 数据格式与 musicPlaylist 一致：[{name, rel, url}]，rel 用于去重/路径展示
+const MP_KEY="ddnas_music_playlist";
+function getMusicPageList(){
+  try{return JSON.parse(localStorage.getItem(MP_KEY)||"[]")||[];}catch(e){return[];}
+}
+function saveMusicPageList(arr){
+  try{localStorage.setItem(MP_KEY,JSON.stringify(arr||[]));}catch(e){}
+}
+// 从文件页加入一首：rel 为相对路径，name 为文件名
+function addMusicPageItem(rel,name){
+  if(!rel)return false;
+  const list=getMusicPageList();
+  // 去重：同 rel 已存在则不重复添加
+  if(list.some(a=>a.rel===rel)){toast("已在播放列表中");return false;}
+  list.push({name:name||rel.split("/").pop()||"未知",rel:rel,url:streamUrl(rel)});
+  saveMusicPageList(list);
+  toast("已加入播放列表");
+  // 若当前正在播放页，刷新展示
+  if(curTab==="music")renderMusicPageList();
+  return true;
+}
+function removeMusicPageItem(i){
+  const list=getMusicPageList();
+  if(i<0||i>=list.length)return;
+  list.splice(i,1);
+  saveMusicPageList(list);
+  renderMusicPageList();
+}
+function clearMusicPageList(){
+  const list=getMusicPageList();
+  if(!list.length){toast("列表已为空");return;}
+  if(!confirm("确定清空播放列表？"))return;
+  saveMusicPageList([]);
+  renderMusicPageList();
+  toast("已清空播放列表");
+}
+function renderMusicPageList(){
+  const el=document.getElementById("mp-list");
+  const cnt=document.getElementById("mp-count");
+  if(!el)return;
+  const list=getMusicPageList();
+  if(cnt)cnt.textContent=list.length;
+  if(!list.length){el.innerHTML='<div class="dl-empty">暂无歌曲，从「文件」添加</div>';return;}
+  el.innerHTML=list.map(function(a,i){
+    return '<div class="mp-item" onclick="musicPagePlay('+i+')">'+
+      '<span class="mp-ic">🎵</span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="mp-nm">'+esc(a.name||"未知")+'</div>'+
+        '<div class="mp-sub">'+esc(a.rel||"")+'</div>'+
+      '</div>'+
+      '<button class="mp-del" onclick="event.stopPropagation();removeMusicPageItem('+i+')" title="移除">✕</button>'+
+    '</div>';
+  }).join("");
+}
+// 从持久化列表播放第 i 首：整列表交给 startMusic（与目录播放共用同一播放器）
+function musicPagePlay(i){
+  const list=getMusicPageList();
+  if(!list.length){toast("播放列表为空");return;}
+  i=Math.max(0,Math.min(i,list.length-1));
+  startMusic(i,list);
+}
 // 睡眠定时器：弹窗选时长，到点暂停播放
 // App 端：ddnas.setSleepTimer → MusicService 持 WakeLock 执行，息屏也到点停
 // 浏览器端：JS setTimeout fallback（页面不能关，否则失效）
 let musicSleepMs=0;     // 剩余毫秒（0=未设定）
 let musicSleepTimer=null; // 浏览器端 setTimeout 句柄
-// 弹窗选时长：15/30/60/取消
+// 弹出选择式弹窗（替代 prompt 文本输入）：15/30/45/60/取消
 function musicSleepMenu(){
-  const opts=["15 分钟","30 分钟","60 分钟","取消定时"];
-  const choice=prompt("睡眠定时（到点暂停播放）",opts.join("\n"));
-  if(choice===null)return;
-  let mins=0;
-  if(choice.indexOf("15")!==-1)mins=15;
-  else if(choice.indexOf("30")!==-1)mins=30;
-  else if(choice.indexOf("60")!==-1)mins=60;
+  document.getElementById("sleep-modal").style.display="flex";
+}
+function closeSleepMenu(){
+  document.getElementById("sleep-modal").style.display="none";
+}
+function pickSleep(mins){
+  closeSleepMenu();
   if(mins>0){
     if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){
       try{ddnas.setSleepTimer(mins);}catch(e){}
