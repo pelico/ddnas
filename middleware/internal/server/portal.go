@@ -22,6 +22,15 @@ const portalSrc = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#f3f5fa">
 <title>DDNAS</title>
+<script>
+// 主题早加载：在 <style> 渲染前设 data-theme，避免深色 FOUC（白屏闪烁）
+// 值：auto=跟随系统 / light / dark，存 localStorage，默认 auto
+try{
+  var t=localStorage.getItem("ddnas_theme")||"auto";
+  if(t!=="auto"&&t!=="light"&&t!=="dark")t="auto";
+  document.documentElement.setAttribute("data-theme",t);
+}catch(e){document.documentElement.setAttribute("data-theme","auto");}
+</script>
 <style>
 :root{
   --bg:#f3f5fa;
@@ -37,8 +46,13 @@ const portalSrc = `<!doctype html>
   --surface2:#f6f8fc;
   --chip:#eef2fa;
 }
+/* 深色变量：手动开关 data-theme="dark" 或 跟随系统(data-theme="auto" 且系统深色) */
+[data-theme="dark"]{
+  --bg:#0e1018;--card:#171a25;--fg:#edf0f6;--muted:#8e95a7;--muted2:#5b6375;
+  --bd:#252a39;--surface2:#12151f;--chip:#1a2030;
+}
 @media (prefers-color-scheme: dark){
-  :root{
+  :root[data-theme="auto"]{
     --bg:#0e1018;--card:#171a25;--fg:#edf0f6;--muted:#8e95a7;--muted2:#5b6375;
     --bd:#252a39;--surface2:#12151f;--chip:#1a2030;
   }
@@ -75,8 +89,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   color:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;
 }
 @media (prefers-color-scheme: dark){
-  .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
+  :root[data-theme="auto"] .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
 }
+[data-theme="dark"] .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
 .nas-card::after{
   content:"";position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08);
 }
@@ -197,8 +212,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   background:linear-gradient(135deg,#3478f6,#5a93ff);color:#fff;border-radius:18px;padding:16px;
 }
 @media (prefers-color-scheme: dark){
-  .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
+  :root[data-theme="auto"] .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
 }
+[data-theme="dark"] .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
 .me-head .av{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.22);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:20px}
 .me-head .t{font-size:16px;font-weight:600}
 .me-head .s{font-size:12px;opacity:.85;margin-top:2px}
@@ -392,6 +408,11 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted2);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ===== 主题分段开关（我的页） ===== */
+.theme-seg{display:flex;gap:0;background:var(--surface2);border:1px solid var(--bd);border-radius:10px;padding:2px}
+.theme-seg button{flex:1;padding:8px 0;font-size:13px;border-radius:8px;color:var(--muted);background:transparent}
+.theme-seg button.on{background:var(--card);color:var(--accent);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
 /* ===== 睡眠定时选择弹窗（替代 prompt 文本输入） ===== */
 .sleep-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
 .sleep-card{background:var(--card);border-radius:16px;width:calc(100% - 48px);max-width:320px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
@@ -474,6 +495,18 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       <div>
         <div class="t">admin</div>
         <div class="s" id="me-host">—</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sitem">
+        <span class="ic">🌓</span>
+        <div class="lbl">主题模式<div class="desc">跟随系统或手动切换深/浅色</div></div>
+        <div class="theme-seg" id="theme-seg" style="flex:0 0 auto">
+          <button data-theme-val="auto">自动</button>
+          <button data-theme-val="light">浅色</button>
+          <button data-theme-val="dark">深色</button>
+        </div>
       </div>
     </div>
 
@@ -671,6 +704,34 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 </div>
 
 <script>
+/* ========= 主题手动开关：auto/light/dark，localStorage 持久化 ========= */
+// 早加载脚本已把 data-theme 设到 <html>，这里只负责 UI 同步 + 切换
+function setTheme(v){
+  if(v!=="auto"&&v!=="light"&&v!=="dark")v="auto";
+  document.documentElement.setAttribute("data-theme",v);
+  try{localStorage.setItem("ddnas_theme",v);}catch(e){}
+  // 同步分段按钮高亮
+  document.querySelectorAll("#theme-seg button").forEach(b=>{
+    b.classList.toggle("on",b.dataset.themeVal===v);
+  });
+  // 同步 meta theme-color（影响浏览器地址栏/状态栏配色）
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta){
+    const dark=v==="dark"||(v==="auto"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);
+    meta.content=dark?"#0e1018":"#f3f5fa";
+  }
+}
+function initThemeSeg(){
+  const seg=document.getElementById("theme-seg");
+  if(!seg)return;
+  let cur="auto";
+  try{cur=localStorage.getItem("ddnas_theme")||"auto";}catch(e){}
+  setTheme(cur);
+  seg.querySelectorAll("button").forEach(b=>{
+    b.addEventListener("click",function(){setTheme(b.dataset.themeVal);});
+  });
+}
+
 /* ========= 全局 401 拦截：session 失效自动跳登录页 ========= */
 // 容器重装 / 密码变更后旧 session 失效，/portal/api/* 返回 401。
 // 这里 monkey-patch fetch，捕获 401 后跳转 /admin/login，避免页面停在 401 JSON 上。
@@ -754,7 +815,7 @@ function setTab(t){
   });
   if(t==="home"&&!homeLoaded)loadHome();
   if(t==="files"&&!filesLoadedEver)loadFiles("");
-  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();loadBackupHistory();}
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;initThemeSeg();loadBackupConfig();loadBackupHistory();}
   if(t==="download")loadDownloadTasks();
   if(t==="music")renderMusicPageList();
   // 滚动回到顶部
