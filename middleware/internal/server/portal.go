@@ -814,6 +814,8 @@ function setTab(t){
     if(el)el.classList.toggle("on",k===t);
   });
   if(t==="home"&&!homeLoaded)loadHome();
+  // 离开首页停监控轮询，避免切到其他 tab 仍空跑
+  if(t!=="home"&&pollTimer){clearTimeout(pollTimer);pollTimer=null;pollBgIdx=0;}
   if(t==="files"&&!filesLoadedEver)loadFiles("");
   if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;initThemeSeg();loadBackupConfig();loadBackupHistory();}
   if(t==="download")loadDownloadTasks();
@@ -850,6 +852,10 @@ function renderGrid(){
 let sys=null;        // 上次 /api/node/system 结果
 let homeLoaded=false;
 let pollTimer=null;
+// 首页监控轮询退避：前台 10s；后台逐级退避 30s→60s→120s（封顶 120s），
+// 避免后台空跑 fetch 耗电。回前台由 visibilitychange 立即刷一次并重置到 10s。
+const POLL_FG=10000, POLL_BG_STEPS=[30000,60000,120000];
+let pollBgIdx=0;  // 后台退避阶梯索引
 
 // 判断进度条配色：>=90% 红(err)，>=70% 橙(warn)，否则绿(ok)
 function barClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
@@ -915,9 +921,46 @@ async function loadHome(){
     }
   };
   await doLoad(false);
-  if(pollTimer)clearInterval(pollTimer);
-  pollTimer=setInterval(function(){doLoad(false);},10000);
+  window.__doLoad=doLoad;  // 供 forceRefreshSystem / visibilitychange 重入
+  if(pollTimer)clearTimeout(pollTimer);
+  pollBgIdx=0;
+  pollTimer=setTimeout(function tick(){
+    doLoad(false).finally(()=>{
+      // 链式安排下一次；页面隐藏时逐级退避，避免后台空跑
+      if(document.hidden){
+        const delay=POLL_BG_STEPS[Math.min(pollBgIdx,POLL_BG_STEPS.length-1)];
+        pollBgIdx=Math.min(pollBgIdx+1,POLL_BG_STEPS.length-1);
+        pollTimer=setTimeout(tick,delay);
+      }else{
+        pollBgIdx=0;
+        pollTimer=setTimeout(tick,POLL_FG);
+      }
+    });
+  },POLL_FG);
 }
+// visibilitychange：回前台立即刷一次 + 重置退避到 10s；后台不动（下个 tick 自动退避）
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden && curTab==="home" && window.__doLoad){
+    if(pollTimer)clearTimeout(pollTimer);
+    pollBgIdx=0;
+    window.__doLoad(false).finally(()=>{
+      if(!document.hidden){
+        pollTimer=setTimeout(function tick(){
+          window.__doLoad(false).finally(()=>{
+            if(document.hidden){
+              const delay=POLL_BG_STEPS[Math.min(pollBgIdx,POLL_BG_STEPS.length-1)];
+              pollBgIdx=Math.min(pollBgIdx+1,POLL_BG_STEPS.length-1);
+              pollTimer=setTimeout(tick,delay);
+            }else{
+              pollBgIdx=0;
+              pollTimer=setTimeout(tick,POLL_FG);
+            }
+          });
+        },POLL_FG);
+      }
+    });
+  }
+});
 let lastStat={mode:"",text:"",ts:0,ms:0};
 /* 连接状态展示：ok=绿圈+延迟 / loading=黄圈+连接中 / err=红圈+检查网络。
    详细错误信息已在监控卡区域展示，d-stat 只保留简短状态，避免文字过长挤压布局。 */

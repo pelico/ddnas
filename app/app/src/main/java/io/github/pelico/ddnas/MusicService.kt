@@ -52,12 +52,27 @@ class MusicService : Service() {
     private var cookie = ""
 
     // 播放进度定时推送：等价于 Web 端 Audio.timeupdate 事件
+    // 节能退避：UI 可见时 1s 推（进度条流畅）；App 切后台时逐级退避到 5s→10s→30s，
+    // 后台仍保留推送（非完全停）以便切歌时 UI 能在 ≤30s 内同步，且不依赖前台。
+    // 播放连续性靠 WakeLock+WifiLock+ExoPlayer 缓冲，与进度推送频率无关，退避零影响。
     private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var uiVisible = true  // 由 MainActivity onStart/onStop 通过桥设置
+    private var bgBackoffIdx = 0  // 后台退避阶梯索引
     private val progressRunnable = object : Runnable {
         override fun run() {
             if (player?.isPlaying == true) {
                 notifyState()
-                progressHandler.postDelayed(this, 1000)
+                // 后台逐级退避 5s→10s→30s（封顶 30s）；前台恢复 1s
+                val delay = if (uiVisible) {
+                    bgBackoffIdx = 0
+                    1000L
+                } else {
+                    val steps = longArrayOf(5000, 10000, 30000)
+                    val d = steps[minOf(bgBackoffIdx, steps.size - 1)]
+                    bgBackoffIdx = minOf(bgBackoffIdx + 1, steps.size - 1)
+                    d
+                }
+                progressHandler.postDelayed(this, delay)
             }
         }
     }
@@ -86,6 +101,19 @@ class MusicService : Service() {
     }
 
     // ---------- 公共控制（由 MainActivity JS 桥调用） ----------
+
+    /** 由 MainActivity onStart/onStop 调用：标记 UI 可见性，驱动进度推送退避节能 */
+    fun setUiVisible(visible: Boolean) {
+        uiVisible = visible
+        if (visible) {
+            bgBackoffIdx = 0
+            // 回前台若正在播放且进度推送已停（如暂停过），立即补推一次
+            if (player?.isPlaying == true) {
+                progressHandler.removeCallbacks(progressRunnable)
+                progressHandler.post(progressRunnable)
+            }
+        }
+    }
 
     fun play(index: Int, tracks: List<Track>, host: String, cookie: String) {
         this.playlist = tracks

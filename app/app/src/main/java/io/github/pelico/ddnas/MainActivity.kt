@@ -80,6 +80,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 节能：前后台状态驱动 MusicService 进度推送退避
+        // onStart=前台（UI 可见，1s 推进度）/ onStop=后台（退避 5s→10s→30s，保播放不停）
+        // 用 DefaultLifecycleObserver（@OnLifecycleEvent 已废弃，新版 lifecycle 不再支持）
+        lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
+            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { MusicService.instance?.setUiVisible(true) }
+            override fun onStop(owner: androidx.lifecycle.LifecycleOwner) { MusicService.instance?.setUiVisible(false) }
+        })
+
         treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) onTreePicked(uri)
         }
