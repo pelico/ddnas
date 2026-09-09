@@ -499,10 +499,21 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        /** 播放列表中指定索引的歌曲。 */
+        /** 播放列表中指定索引的歌曲。每次都带最新 cookie，防止后台过期。 */
         @JavascriptInterface
         fun musicPlayAt(index: Int) {
-            runOnUiThread { MusicService.instance?.playAt(index) }
+            runOnUiThread {
+                val svc = MusicService.instance ?: return@runOnUiThread
+                // 从 WebView 取最新 cookie 刷新给 Service，防止后台会话过期导致 401
+                val active = currentServer()
+                if (active != null) {
+                    val origin = active.url.trimEnd('/')
+                    val ck = CookieManager.getInstance().getCookie(origin) ?: ""
+                    svc.playAt(index, ck)
+                } else {
+                    svc.playAt(index)
+                }
+            }
         }
 
         /** 拖动进度：percent 0~100，Service 内按 duration 换算 position。 */
