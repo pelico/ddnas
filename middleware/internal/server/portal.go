@@ -24,12 +24,12 @@ const portalSrc = `<!doctype html>
 <title>DDNAS</title>
 <script>
 // 主题早加载：在 <style> 渲染前设 data-theme，避免深色 FOUC（白屏闪烁）
-// 值：auto=跟随系统 / light / dark，存 localStorage，默认 auto
+// 值：auto=跟随系统 / light / dark，存 localStorage，默认 light（强制浅色开屏）
 try{
-  var t=localStorage.getItem("ddnas_theme")||"auto";
-  if(t!=="auto"&&t!=="light"&&t!=="dark")t="auto";
+  var t=localStorage.getItem("ddnas_theme")||"light";
+  if(t!=="auto"&&t!=="light"&&t!=="dark")t="light";
   document.documentElement.setAttribute("data-theme",t);
-}catch(e){document.documentElement.setAttribute("data-theme","auto");}
+}catch(e){document.documentElement.setAttribute("data-theme","light");}
 </script>
 <style>
 :root{
@@ -707,7 +707,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* ========= 主题手动开关：auto/light/dark，localStorage 持久化 ========= */
 // 早加载脚本已把 data-theme 设到 <html>，这里只负责 UI 同步 + 切换
 function setTheme(v){
-  if(v!=="auto"&&v!=="light"&&v!=="dark")v="auto";
+  if(v!=="auto"&&v!=="light"&&v!=="dark")v="light";
   document.documentElement.setAttribute("data-theme",v);
   try{localStorage.setItem("ddnas_theme",v);}catch(e){}
   // 同步分段按钮高亮
@@ -724,8 +724,8 @@ function setTheme(v){
 function initThemeSeg(){
   const seg=document.getElementById("theme-seg");
   if(!seg)return;
-  let cur="auto";
-  try{cur=localStorage.getItem("ddnas_theme")||"auto";}catch(e){}
+  let cur="light";
+  try{cur=localStorage.getItem("ddnas_theme")||"light";}catch(e){}
   setTheme(cur);
   seg.querySelectorAll("button").forEach(b=>{
     b.addEventListener("click",function(){setTheme(b.dataset.themeVal);});
