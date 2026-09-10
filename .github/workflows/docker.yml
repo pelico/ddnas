@@ -129,9 +129,9 @@ jobs:
           done
           docker buildx imagetools create "${args[@]}" ${{ steps.m.outputs.sources }}
 
-  # 仅 tag 触发：把已推 GHCR 的三个单架构镜像 export 为 tar.gz，
+  # 仅 tag 触发：把已推 GHCR 的三个单架构镜像 export 为纯 tar 包，
   # 附到 GitHub Release（amd64 / arm64 / armv7 各一份），
-  # 方便不联网/本地导入/ARM 单板用户直接 docker load 部署。
+  # 用户下载后 `docker load -i xxx.tar` 直接导入即可使用。
   release-tar:
     needs: manifest
     if: ${{ !cancelled() && needs.manifest.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
@@ -148,9 +148,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 三个架构并行导出：每个拉镜像 -> save 成 tar -> gzip 压缩，
-      # 命名 ddnas_<version>_linux_<arch>.tar.gz
-      - name: Export linux/amd64 image to tar.gz
+      # 三个架构并行导出：每个拉镜像 -> save 成 docker 原生 tar 包，
+      # 命名 ddnas_<version>_linux_<arch>.tar（无压缩，用户直接 docker load）
+      - name: Export linux/amd64 image to tar
         run: |
           set -eux
           ver="${GITHUB_REF_NAME}"
@@ -158,10 +158,9 @@ jobs:
           docker pull "$img"
           mkdir -p out
           docker save -o "out/ddnas_${ver}_linux_amd64.tar" "$img"
-          gzip -9 -f "out/ddnas_${ver}_linux_amd64.tar"
           ls -lh out/
 
-      - name: Export linux/arm64 image to tar.gz
+      - name: Export linux/arm64 image to tar
         run: |
           set -eux
           ver="${GITHUB_REF_NAME}"
@@ -169,10 +168,9 @@ jobs:
           docker pull "$img"
           mkdir -p out
           docker save -o "out/ddnas_${ver}_linux_arm64.tar" "$img"
-          gzip -9 -f "out/ddnas_${ver}_linux_arm64.tar"
           ls -lh out/
 
-      - name: Export linux/arm/v7 image to tar.gz
+      - name: Export linux/arm/v7 image to tar
         run: |
           set -eux
           ver="${GITHUB_REF_NAME}"
@@ -180,19 +178,18 @@ jobs:
           docker pull "$img"
           mkdir -p out
           docker save -o "out/ddnas_${ver}_linux_armv7.tar" "$img"
-          gzip -9 -f "out/ddnas_${ver}_linux_armv7.tar"
           ls -lh out/
 
       - name: Upload tarballs as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ddnas-docker-tarballs
-          path: out/*.tar.gz
+          path: out/*.tar
           if-no-files-found: error
 
       - name: Attach tarballs to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*.tar.gz
+          files: out/*.tar
           # release notes 由 android.yml 的同名 job 生成（同 tag），这里只追加文件
           generate_release_notes: false
