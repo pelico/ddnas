@@ -70,7 +70,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* ===== 顶栏（仅首页、文件页显示搜索/返回，我的页隐藏） ===== */
 .topbar{
   position:sticky;top:0;z-index:10;background:var(--bg);
-  padding:10px 14px 12px;border-bottom:1px solid transparent;
+  padding:10px 14px 12px;border-bottom:1px solid var(--bd);
 }
 .search{
   display:flex;align-items:center;gap:8px;
@@ -171,7 +171,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 /* ===== 文件页 ===== */
 .file-bar{
-  position:sticky;top:0;z-index:9;background:var(--bg);padding:10px 14px 12px;
+  position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 14px 12px;
   display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd);
 }
 .file-top{display:flex;align-items:center;gap:10px;min-height:46px}
@@ -211,7 +211,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .err{color:var(--err)}
 
 /* ===== 我的页 ===== */
-.me{padding:10px 14px 16px;display:flex;flex-direction:column;gap:12px}
+.me{padding:4px 14px 12px;display:flex;flex-direction:column;gap:12px}
 .me-head{
   display:flex;align-items:center;gap:12px;
   background:linear-gradient(135deg,#3478f6,#5a93ff);color:#fff;border-radius:18px;padding:16px;
@@ -374,7 +374,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .tabbar button.on{color:var(--accent)}
 
 /* ===== 下载页（DDM3U8 任务管理） ===== */
-.dl-bar{position:sticky;top:0;z-index:10;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid transparent}
+.dl-bar{position:sticky;top:0;z-index:10;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 14px 12px;border-bottom:1px solid var(--bd)}
 .dl-bar .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px}
 .dl-title{flex:1;font-weight:700;font-size:16px}
 .dl-refresh{width:34px;height:34px;border-radius:10px;background:var(--surface2);border:1px solid var(--bd);font-size:15px;display:inline-flex;align-items:center;justify-content:center}
@@ -389,7 +389,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .dl-submit .dl-go:disabled{background:var(--muted2);opacity:.5;cursor:not-allowed}
 .dl-stat{font-size:11px;color:var(--muted);text-align:right}
 .dl-list{display:flex;flex-direction:column;gap:8px}
-.dl-task{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.dl-task{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:10px 12px}
 .dl-task-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dl-task-name{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dl-badge{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);white-space:nowrap}
@@ -430,7 +430,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .sleep-opt.cancel{color:var(--muted);font-size:14px}
 
 /* ===== 播放页列表项 ===== */
-.mp-item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.mp-item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:10px 12px}
 .mp-item:active{opacity:.8}
 .mp-item .mp-ic{font-size:18px;opacity:.8}
 .mp-item .mp-nm{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
