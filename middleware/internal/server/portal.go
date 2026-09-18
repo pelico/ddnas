@@ -7,6 +7,15 @@ package server
 
 import (
 	"net/http"
+	"strings"
+)
+
+// 版本注入变量：构建时通过
+// 	go build -ldflags "-X github.com/pelico/ddnas/middleware/internal/server.appVersion=v1.1 -X github.com/pelico/ddnas/middleware/internal/server.buildNumber=<git 提交数>"
+// 注入。appVersion 为语义版本号，buildNumber 为 git 提交总数（每次 push 递增）。
+var (
+	appVersion  = "v1.1"
+	buildNumber = "0"
 )
 
 // portalSrc 内联完整 SPA。仿照用户参考的极空间 App 视觉：
@@ -223,6 +232,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .me-head .av{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.22);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:20px}
 .me-head .t{font-size:16px;font-weight:600}
 .me-head .s{font-size:12px;opacity:.85;margin-top:2px}
+.bk-title{padding:6px 2px 2px;display:flex;flex-direction:column;gap:2px}
+.bk-title .t{font-size:16px;font-weight:600}
+.bk-title .s{font-size:12px;opacity:.75;margin-top:2px}
 .section{background:var(--card);border:1px solid var(--bd);border-radius:16px;overflow:hidden}
 .sitem{display:flex;align-items:center;gap:12px;padding:14px;position:relative}
 .sitem+.sitem::before{content:"";position:absolute;left:52px;right:0;top:0;border-top:1px solid var(--bd)}
@@ -310,6 +322,15 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-hist-failed{margin-top:6px;padding:6px 8px;background:var(--card);border-radius:6px;border:1px dashed var(--bd);font-size:11px;color:var(--muted)}
 .bk-hist-failed .fl-head{color:var(--err);font-weight:600;margin-bottom:3px}
 .bk-hist-failed .fl-list{white-space:pre-wrap;word-break:break-all;line-height:1.5;max-height:120px;overflow:auto}
+
+/* 失败黑名单独立区块（备份页） */
+.bk-failed{margin-top:10px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid rgba(239,91,91,.25)}
+.bk-failed-empty{padding:14px;text-align:center;color:var(--muted2);font-size:12px}
+.bk-failed-item{padding:8px 0;border-top:1px solid var(--bd);font-size:12px}
+.bk-failed-item:first-child{border-top:0}
+.bk-failed-row{display:flex;align-items:center;gap:8px}
+.bk-failed-path{flex:1;min-width:0;word-break:break-all;color:var(--fg);line-height:1.4}
+.bk-failed-meta{margin-top:2px;color:var(--muted);font-size:10px}
 
 /* 远程目录浏览弹层 */
 /* inset:0 在旧 WebView 可能无效，用 top/left/right/bottom:0 替代；
@@ -414,10 +435,14 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted2);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ===== 主题分段开关（我的页） ===== */
-.theme-seg{display:flex;gap:0;background:var(--surface2);border:1px solid var(--bd);border-radius:10px;padding:2px}
-.theme-seg button{flex:1;padding:8px 0;font-size:13px;border-radius:8px;color:var(--muted);background:transparent}
-.theme-seg button.on{background:var(--card);color:var(--accent);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+/* ===== 主题切换按钮（我的页）：点击在 自动/浅色/深色 间循环 ===== */
+.theme-btn{
+  flex:0 0 auto;min-width:76px;text-align:center;
+  padding:8px 14px;font-size:13px;border-radius:10px;color:#fff;
+  background:linear-gradient(135deg,#3478f6,#5a93ff);border:0;
+  font-weight:600;
+}
+.theme-btn:active{opacity:.85}
 
 /* ===== 睡眠定时选择弹窗（替代 prompt 文本输入） ===== */
 .sleep-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
@@ -515,18 +540,63 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       <div class="sitem">
         <span class="ic">🌓</span>
         <div class="lbl">主题模式<div class="desc">跟随系统或手动切换深/浅色</div></div>
-        <div class="theme-seg" id="theme-seg" style="flex:0 0 auto">
-          <button data-theme-val="auto">自动</button>
-          <button data-theme-val="light">浅色</button>
-          <button data-theme-val="dark">深色</button>
-        </div>
+        <button class="theme-btn" id="theme-btn" onclick="cycleTheme()" title="点击切换主题"></button>
       </div>
     </div>
 
+    <div class="section">
+      <a href="/admin/" class="sitem" style="color:inherit;text-decoration:none">
+        <span class="ic">⚙️</span>
+        <div class="lbl">控制台<div class="desc">适配器配置、App 令牌、连接信息</div></div>
+        <span class="arr">›</span>
+      </a>
+    </div>
+
+    <div class="section">
+      <div class="sitem">
+        <span class="ic">ℹ️</span>
+        <div class="lbl">版本<div class="desc">DDNAS {{APP_VERSION}} · 构建 <span id="me-build">{{BUILD_NUMBER}}</span></div></div>
+      </div>
+      <div class="sitem">
+        <span class="ic">🛰</span>
+        <div class="lbl">主机<div class="desc" id="me-host2">—</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 下载页（DDM3U8 任务管理，底部 tab 进入） ========== -->
+<section id="view-download" class="hidden">
+  <div class="dl-bar">
+    <div class="dl-title">下载任务</div>
+    <button class="dl-refresh" onclick="refreshDownloadNow()" title="刷新">↻</button>
+  </div>
+  <div class="dl-page">
+    <!-- 提交表单：url 必填，DDM3U8 会从文本里正则识别多个 m3u8 链接 -->
+    <div class="dl-submit">
+      <textarea id="dl-url" placeholder="粘贴 m3u8 链接（支持多个，自动识别）"></textarea>
+      <input id="dl-name" type="text" placeholder="文件名前缀（可选，默认 video）" />
+      <input id="dl-referer" type="text" placeholder="Referer（可选，防盗链站点需要）" />
+      <input id="dl-subpath" type="text" placeholder="子目录（可选，仅一层名）" />
+      <button class="dl-go" id="dl-go" onclick="submitDownload()">提交下载</button>
+      <div class="dl-stat" id="dl-stat">活跃 <b id="dl-active">0</b>/<b id="dl-max">0</b> 并发</div>
+    </div>
+    <!-- 任务列表：从 /portal/api/download/tasks 实时拉取，DDM3U8 状态中文 → 徽章映射 -->
+    <div class="dl-list" id="dl-list"><div class="dl-empty">加载中…</div></div>
+  </div>
+</section>
+
+<!-- ========== 手机备份页（独立 tab，为多目录/多备份目标扩展预留） ========== -->
+<section id="view-backup" class="hidden">
+  <div class="me">
+    <div class="bk-title">
+      <div class="t">💾 手机备份</div>
+      <div class="s">递归上传所选目录到中间件</div>
+    </div>
     <div class="section" id="bk-section">
       <div class="sitem big" id="bk-quick" onclick="onQuickBackup()">
-        <span class="ic">💾</span>
-        <div class="lbl"><span id="bk-quick-label">立即备份</span><div class="desc" id="bk-quick-desc">递归上传选中目录到中间件</div></div>
+        <span class="ic">🚀</span>
+        <div class="lbl"><span id="bk-quick-label">立即备份</span><div class="desc" id="bk-quick-desc">上传所有变更文件到远程目录</div></div>
         <span class="arr">›</span>
       </div>
       <div class="bk-panel">
@@ -573,58 +643,19 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
           </div>
           <div class="bk-hist-empty" id="bk-hist-empty">加载中…</div>
         </div>
+        <!-- 失败黑名单（服务端 manifest 持久化的当前失败文件，独立定位入口） -->
+        <div class="bk-failed" id="bk-failed">
+          <div class="bk-hist-head">
+            <span>⚠️ 失败文件 (<b id="bk-failed-count">0</b>)</span>
+            <div class="bk-hist-actions">
+              <button class="bk-hist-refresh" onclick="loadBackupFailedList()">刷新</button>
+              <button class="bk-hist-refresh" onclick="retryAllBackupFailed()">全部重试</button>
+            </div>
+          </div>
+          <div class="bk-failed-empty" id="bk-failed-empty">加载中…</div>
+        </div>
       </div>
     </div>
-
-    <div class="section">
-      <a href="/admin/" class="sitem" style="color:inherit;text-decoration:none">
-        <span class="ic">⚙️</span>
-        <div class="lbl">控制台<div class="desc">适配器配置、App 令牌、连接信息</div></div>
-        <span class="arr">›</span>
-      </a>
-      <a href="/admin/adapter/node" class="sitem" style="color:inherit;text-decoration:none">
-        <span class="ic">🖥</span>
-        <div class="lbl">设备监控配置<div class="desc">node_exporter 地址等</div></div>
-        <span class="arr">›</span>
-      </a>
-      <a href="/admin/adapter/openlist" class="sitem" style="color:inherit;text-decoration:none">
-        <span class="ic">📁</span>
-        <div class="lbl">文件服务配置<div class="desc">AList/OpenList 地址、令牌、根路径</div></div>
-        <span class="arr">›</span>
-      </a>
-    </div>
-
-    <div class="section">
-      <div class="sitem">
-        <span class="ic">ℹ️</span>
-        <div class="lbl">版本<div class="desc">DDNAS v1.1 · 构建 <span id="me-build">20260903</span></div></div>
-      </div>
-      <div class="sitem">
-        <span class="ic">🛰</span>
-        <div class="lbl">主机<div class="desc" id="me-host2">—</div></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ========== 下载页（DDM3U8 任务管理，底部 tab 进入） ========== -->
-<section id="view-download" class="hidden">
-  <div class="dl-bar">
-    <div class="dl-title">下载任务</div>
-    <button class="dl-refresh" onclick="refreshDownloadNow()" title="刷新">↻</button>
-  </div>
-  <div class="dl-page">
-    <!-- 提交表单：url 必填，DDM3U8 会从文本里正则识别多个 m3u8 链接 -->
-    <div class="dl-submit">
-      <textarea id="dl-url" placeholder="粘贴 m3u8 链接（支持多个，自动识别）"></textarea>
-      <input id="dl-name" type="text" placeholder="文件名前缀（可选，默认 video）" />
-      <input id="dl-referer" type="text" placeholder="Referer（可选，防盗链站点需要）" />
-      <input id="dl-subpath" type="text" placeholder="子目录（可选，仅一层名）" />
-      <button class="dl-go" id="dl-go" onclick="submitDownload()">提交下载</button>
-      <div class="dl-stat" id="dl-stat">活跃 <b id="dl-active">0</b>/<b id="dl-max">0</b> 并发</div>
-    </div>
-    <!-- 任务列表：从 /portal/api/download/tasks 实时拉取，DDM3U8 状态中文 → 徽章映射 -->
-    <div class="dl-list" id="dl-list"><div class="dl-empty">加载中…</div></div>
   </div>
 </section>
 
@@ -643,10 +674,6 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
         <button class="dl-go" style="padding:6px 12px;font-size:12px" onclick="setTab('files')">从云盘添加</button>
         <button class="dl-go" style="padding:6px 12px;font-size:12px;background:var(--surface2);color:var(--fg)" onclick="clearMusicPageList()">清空</button>
       </div>
-      <div style="font-size:11px;color:var(--muted);line-height:1.5">
-        在「文件」中点击音频文件可加入此列表（持久保存，重启不丢）。
-        已加入的歌曲在此页面集中播放/移除。
-      </div>
     </div>
     <div class="dl-list" id="mp-list"><div class="dl-empty">暂无歌曲，从「文件」添加</div></div>
   </div>
@@ -657,6 +684,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
   <button id="tab-music" onclick="setTab('music')"><span class="ic">🎵</span><span class="lb">播放</span></button>
+  <button id="tab-backup" onclick="setTab('backup')"><span class="ic">💾</span><span class="lb">备份</span></button>
   <button id="tab-download" onclick="setTab('download')"><span class="ic">⬇️</span><span class="lb">下载</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
@@ -717,16 +745,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 </div>
 
 <script>
-/* ========= 主题手动开关：auto/light/dark，localStorage 持久化 ========= */
+/* ========= 主题切换：单按钮循环 auto/light/dark，localStorage 持久化 ========= */
 // 早加载脚本已把 data-theme 设到 <html>，这里只负责 UI 同步 + 切换
-function setTheme(v){
-  if(v!=="auto"&&v!=="light"&&v!=="dark")v="light";
+const THEME_LABEL={auto:"自动",light:"浅色",dark:"深色"};
+const THEME_ORDER=["auto","light","dark"];
+function applyTheme(v){
+  if(!(v in THEME_LABEL))v="light";
   document.documentElement.setAttribute("data-theme",v);
   try{localStorage.setItem("ddnas_theme",v);}catch(e){}
-  // 同步分段按钮高亮
-  document.querySelectorAll("#theme-seg button").forEach(b=>{
-    b.classList.toggle("on",b.dataset.themeVal===v);
-  });
+  // 同步按钮文案
+  const btn=document.getElementById("theme-btn");
+  if(btn)btn.textContent=THEME_LABEL[v];
   // 同步 meta theme-color（影响浏览器地址栏/状态栏配色）
   const meta=document.querySelector('meta[name="theme-color"]');
   if(meta){
@@ -734,15 +763,21 @@ function setTheme(v){
     meta.content=dark?"#0e1018":"#f3f5fa";
   }
 }
-function initThemeSeg(){
-  const seg=document.getElementById("theme-seg");
-  if(!seg)return;
+function cycleTheme(){
   let cur="light";
   try{cur=localStorage.getItem("ddnas_theme")||"light";}catch(e){}
-  setTheme(cur);
-  seg.querySelectorAll("button").forEach(b=>{
-    b.addEventListener("click",function(){setTheme(b.dataset.themeVal);});
-  });
+  const idx=THEME_ORDER.indexOf(cur);
+  const next=THEME_ORDER[(idx<0?0:idx+1)%THEME_ORDER.length];
+  applyTheme(next);
+}
+// 初始化：应用已存主题并渲染按钮文案
+function initThemeBtn(){
+  const btn=document.getElementById("theme-btn");
+  if(!btn)return;
+  let cur="light";
+  try{cur=localStorage.getItem("ddnas_theme")||"light";}catch(e){}
+  applyTheme(cur);
+  btn.addEventListener("click",cycleTheme);
 }
 
 /* ========= 全局 401 拦截：session 失效自动跳登录页 ========= */
@@ -816,13 +851,13 @@ if(typeof ddnas==="undefined"){
 let curTab="home";
 function setTab(t){
   curTab=t;
-  // view 容器：含 download/music（download/music 皆为底部 tab 页）
-  ["home","files","me","download","music"].forEach(k=>{
+  // view 容器：含 download/music/backup（皆为底部 tab 页）
+  ["home","files","me","backup","download","music"].forEach(k=>{
     const el=document.getElementById("view-"+k);
     if(el)el.classList.toggle("hidden",k!==t);
   });
-  // tabbar 高亮：home/files/music/download/me 五栏
-  ["home","files","music","download","me"].forEach(k=>{
+  // tabbar 高亮：bottom tabs
+  ["home","files","music","backup","download","me"].forEach(k=>{
     const el=document.getElementById("tab-"+k);
     if(el)el.classList.toggle("on",k===t);
   });
@@ -830,7 +865,11 @@ function setTab(t){
   // 离开首页停监控轮询，避免切到其他 tab 仍空跑
   if(t!=="home"&&pollTimer){clearTimeout(pollTimer);pollTimer=null;pollBgIdx=0;}
   if(t==="files"&&!filesLoadedEver)loadFiles("");
-  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;initThemeSeg();loadBackupConfig();loadBackupHistory();}
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;initThemeBtn();}
+  if(t==="backup"){
+    document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;
+    loadBackupConfig();loadBackupHistory();loadBackupFailedList();
+  }
   if(t==="download")loadDownloadTasks();
   if(t==="music")renderMusicPageList();
   // 滚动回到顶部
@@ -1150,6 +1189,71 @@ function retryBackup(ev){
     toast("请在 App 内点击重试，或重新发起备份");
   }
 }
+/* ========= 失败黑名单（App 端 manifest 持久化的当前失败文件，独立定位入口） =========
+ * 上传失败的文件（4xx/500 永久错误）由 BackupEngine 按 size+mtime 记入黑名单；
+ * 文件未变更时下次备份会跳过（提示"上次失败已跳过"）。此区块列出这些文件供定位，
+ * 并可逐条"移出重试"（清掉黑名单记录，下次备份重新尝试上传）。
+ */
+function loadBackupFailedList(){
+  const host=document.getElementById("bk-failed");
+  const emptyEl=document.getElementById("bk-failed-empty");
+  const cntEl=document.getElementById("bk-failed-count");
+  if(!host||!emptyEl)return;
+  host.querySelectorAll(".bk-failed-item").forEach(el=>el.remove());
+  emptyEl.style.display="";
+  emptyEl.textContent="加载中…";
+  if(typeof ddnas==="undefined"||!ddnas.getBackupFailedList){
+    emptyEl.textContent="失败文件定位需在 App 端查看（浏览器访问不可用）";
+    return;
+  }
+  let list=[];
+  try{list=JSON.parse(ddnas.getBackupFailedList())||[];}catch(e){list=[];}
+  if(cntEl)cntEl.textContent=String(list.length);
+  if(!list.length){emptyEl.textContent="暂无失败文件";return;}
+  emptyEl.style.display="none";
+  list.forEach(item=>{
+    const rel=String(item.rel||"");
+    const el=document.createElement("div");
+    el.className="bk-failed-item";
+    const row=document.createElement("div");
+    row.className="bk-failed-row";
+    const sp=document.createElement("span");
+    sp.className="bk-failed-path";
+    sp.textContent=rel;
+    const btn=document.createElement("button");
+    btn.className="bk-hist-btn retry";
+    btn.textContent="移出重试";
+    btn.addEventListener("click",function(){
+      try{ddnas.unmarkBackupFailed(rel);}catch(e){}
+      toast("已移出失败名单，下次备份将重试：\n"+rel);
+      loadBackupFailedList();
+    });
+    row.appendChild(sp);row.appendChild(btn);
+    el.appendChild(row);
+    const meta=document.createElement("div");
+    meta.className="bk-failed-meta";
+    meta.textContent=fmtFileSize(+item.size||0)+(item.mtime?" · "+new Date(+item.mtime).toLocaleString():"");
+    el.appendChild(meta);
+    host.appendChild(el);
+  });
+}
+// 全部移出黑名单并重新尝试（逐个触发移出，刷新计数）
+function retryAllBackupFailed(){
+  const host=document.getElementById("bk-failed");
+  if(!host)return;
+  const btns=host.querySelectorAll(".bk-failed-item .retry");
+  if(!btns.length){toast("没有需要重试的失败文件");return;}
+  btns.forEach(b=>b.click());
+  toast("已全部移出失败名单，如需立即重试请点「立即备份」");
+}
+// 字节数 → 人类可读（成功备份列表也用它）
+function fmtFileSize(b){
+  b=+b||0;
+  if(b<1024)return b+"B";
+  const kb=b/1024;if(kb<1024)return kb.toFixed(1)+"KB";
+  const mb=kb/1024;if(mb<1024)return mb.toFixed(1)+"MB";
+  const gb=mb/1024;return gb.toFixed(2)+"GB";
+}
 // 毫秒 → "1m23s" / "42s" 紧凑展示
 function fmtDurationMs(ms){
   ms=+ms||0;
@@ -1230,6 +1334,8 @@ function saveRemoteBase(){
 var bkPhase="idle";
 function onQuickBackup(){
   if(typeof ddnas==="undefined"||!ddnas.startBackup)return;
+  // 备份相关控件已移入独立「备份」页，切过去让进度条可见
+  setTab("backup");
   // 进行中：转为取消
   if(bkPhase==="running"||bkPhase==="scanning"){
     if(ddnas.cancelBackup){ddnas.cancelBackup();toast("正在取消当前备份…");}
@@ -2160,6 +2266,31 @@ function onMusicStateChange(json){
   }catch(e){}
 }
 
+// 页面加载后从原生拉取一次播放状态。升级容器/重新登录导致 WebView 重载时，
+// MusicService 仍在后台播放，但前端 JS 状态已全部复位，迷你播放器随之消失。
+// 此处用持久化播放列表（localStorage）重建队列并还原控制条，但不重发 playMusic
+//（原生已在播放，只同步 UI，不干预原生播放）。
+function syncMusicFromNative(){
+  if(typeof ddnas==="undefined"||typeof ddnas.getMusicState!=="function")return;
+  let s;
+  try{s=JSON.parse(ddnas.getMusicState()||"{}");}catch(e){return;}
+  const active=s.playing||(typeof s.sleepMs==="number"&&s.sleepMs>0);
+  if(!active)return;
+  // 用持久化播放列表重建队列（覆盖"添加到播放列表后播放"的主场景）
+  const list=getMusicPageList();
+  if(list.length){
+    musicPlaylist=list;
+    musicIndex=Math.max(0,Math.min(s.index||0,list.length-1));
+    renderMusicList();
+    const item=list[musicIndex];
+    if(item)document.getElementById("m-title").textContent=item.name;
+  }else{
+    document.getElementById("m-title").textContent="—";
+  }
+  document.getElementById("music-player").style.display="flex";
+  onMusicStateChange(JSON.stringify(s));
+}
+
 function openVideoPlayer(url,title){
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column";
@@ -2316,6 +2447,8 @@ async function upload(input){
 (function(){
   const q=new URLSearchParams(location.search);const t=q.get("tab");
   setTab(t==="files"?"files":t==="me"?"me":"home");
+  // 页面加载后立即从原生同步播放器状态，恢复后台仍在播的控制条
+  syncMusicFromNative();
 })();
 </script>
 </body></html>`
@@ -2332,5 +2465,9 @@ func (s *Server) servePortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(portalSrc))
+	// 注入版本占位符：appVersion / buildNumber 通过 -ldflags 构建时写入
+	html := portalSrc
+	html = strings.ReplaceAll(html, "{{APP_VERSION}}", appVersion)
+	html = strings.ReplaceAll(html, "{{BUILD_NUMBER}}", buildNumber)
+	_, _ = w.Write([]byte(html))
 }

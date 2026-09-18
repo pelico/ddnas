@@ -11,8 +11,11 @@ const layoutSrc = `{{define "layout"}}<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{{.Title}} - DDNAS</title>
+<script>try{var t=localStorage.getItem("ddnas_theme")||"light";if(t!=="auto"&&t!=="light"&&t!=="dark")t="light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light")}</script>
 <style>
-:root{--bg:#0f1115;--card:#1a1d24;--fg:#e6e6e6;--muted:#8a8f99;--accent:#4f9cff;--ok:#3ecf8e;--warn:#f5a623;--bd:#2a2e37}
+:root{--bg:#f3f5fa;--card:#ffffff;--fg:#1a1d29;--muted:#8a94a6;--muted2:#b7bfcc;--accent:#3478f6;--ok:#25c275;--warn:#f5a623;--err:#ef5b5b;--bd:#eaeef5;--surface2:#f6f8fc;--chip:#eef2fa}
+[data-theme="dark"]{--bg:#0f1115;--card:#1a1d24;--fg:#e6e6e6;--muted:#8a8f99;--accent:#4f9cff;--ok:#3ecf8e;--warn:#f5a623;--err:#ef5b5b;--bd:#2a2e37;--surface2:#0c0e12;--chip:#1a2030}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"]{--bg:#0f1115;--card:#1a1d24;--fg:#e6e6e6;--muted:#8a8f99;--accent:#4f9cff;--ok:#3ecf8e;--warn:#f5a623;--err:#ef5b5b;--bd:#2a2e37;--surface2:#0c0e12;--chip:#1a2030}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);
   padding-top:env(safe-area-inset-top);
@@ -28,19 +31,19 @@ nav a.on{color:var(--accent)}
 .card h2{margin:0 0 4px;font-size:18px}
 .card .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
 label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
-input,select,textarea{width:100%;padding:9px 11px;border-radius:8px;border:1px solid var(--bd);background:#0c0e12;color:var(--fg);font-size:14px}
+input,select,textarea{width:100%;padding:9px 11px;border-radius:8px;border:1px solid var(--bd);background:var(--surface2);color:var(--fg);font-size:14px}
 input[type=checkbox]{width:auto}
 .row{display:flex;align-items:center;gap:8px}
 button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}
 button.ghost{background:transparent;border:1px solid var(--bd);color:var(--muted)}
-.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:#0c0e12;border:1px solid var(--bd);color:var(--muted)}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--bd);color:var(--muted)}
 .badge.on{color:var(--ok);border-color:#1f3d2e}
 .list{display:flex;flex-direction:column;gap:10px}
-.item{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid var(--bd);border-radius:10px;background:#0c0e12}
+.item{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid var(--bd);border-radius:10px;background:var(--surface2)}
 .item .meta{color:var(--muted);font-size:12px}
 .kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--bd);font-size:13px}
 .kv:last-child{border-bottom:0}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0c0e12;padding:2px 6px;border-radius:6px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface2);padding:2px 6px;border-radius:6px}
 .alert{padding:10px 12px;border-radius:8px;background:#2a1d12;border:1px solid #4a3520;color:var(--warn);font-size:13px;margin-bottom:12px}
 .alert.ok{background:#122418;border-color:#1f3d2e;color:var(--ok)}
 .hint{color:var(--muted);font-size:12px;margin-top:6px}
@@ -67,7 +70,7 @@ const loginSrc = `{{define "content"}}
 <form method="POST" action="/admin/login">
 <label>用户名</label><input name="admin_user" required>
 <label>密码</label><input type="password" name="admin_pass" required>
-<button type="submit">登录</button>
+<button type="submit" style="margin-top:16px">登录</button>
 </form></div>{{end}}`
 
 const indexSrc = `{{define "content"}}
@@ -99,7 +102,7 @@ const adapterSrc = `{{define "content"}}
 {{end}}
 <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
 <button type="submit">保存并重载</button>
-<button type="button" class="ghost" id="btn-test" style="background:#252832;color:var(--fg);border:1px solid var(--bd)">🧪 测试连接</button>
+<button type="button" class="ghost" id="btn-test" style="background:var(--surface2);color:var(--fg);border:1px solid var(--bd)">🧪 测试连接</button>
 <a href="/admin/"><button type="button" class="ghost">返回</button></a>
 </div>
 <div id="test-result" style="margin-top:14px;display:none"></div>
@@ -113,7 +116,7 @@ const adapterSrc = `{{define "content"}}
     var fd=new FormData(f);
     var body=new URLSearchParams(fd).toString();
     btn.disabled=true;btn.style.opacity=".6";box.style.display="block";
-    box.innerHTML='<div class="hint" style="padding:10px 12px;border-radius:8px;background:#252832">⏳ 正在探测…</div>';
+    box.innerHTML='<div class="hint" style="padding:10px 12px;border-radius:8px;background:var(--surface2)">⏳ 正在探测…</div>';
     fetch("/admin/api/test/{{.Name}}",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body,credentials:"same-origin"})
       .then(function(r){return r.json();})
       .then(function(j){
