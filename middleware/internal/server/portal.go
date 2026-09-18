@@ -681,7 +681,6 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
   <button id="tab-music" onclick="setTab('music')"><span class="ic">🎵</span><span class="lb">播放</span></button>
-  <button id="tab-backup" onclick="setTab('backup')"><span class="ic">💾</span><span class="lb">备份</span></button>
   <button id="tab-download" onclick="setTab('download')"><span class="ic">⬇️</span><span class="lb">下载</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
@@ -853,8 +852,8 @@ function setTab(t){
     const el=document.getElementById("view-"+k);
     if(el)el.classList.toggle("hidden",k!==t);
   });
-  // tabbar 高亮：bottom tabs
-  ["home","files","music","backup","download","me"].forEach(k=>{
+  // tabbar 高亮：bottom tabs（备份无底部入口，仅从首页宫格进入独立页）
+  ["home","files","music","download","me"].forEach(k=>{
     const el=document.getElementById("tab-"+k);
     if(el)el.classList.toggle("on",k===t);
   });
@@ -1876,7 +1875,7 @@ function renderFileList(body,items){
         :(kind==="image"
           ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
           :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>'));
-    return '<div class="fitem" data-type="file">'+
+    return '<div class="fitem" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-kind="'+kind+'" data-type="file">'+
       '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
   }).join("")+"</div>";
 
@@ -1886,6 +1885,14 @@ function renderFileList(body,items){
     if(t==="dir"){
       el.addEventListener("click",e=>{
         if(e.target.dataset.type==="enter"||e.target.tagName!=="BUTTON")loadFiles(rel);
+      });
+    }else if(t==="file"){
+      // 整行点击：视频/音频直接打开播放，图片直接查看；右侧按钮各自处理
+      el.addEventListener("click",e=>{
+        if(e.target && e.target.tagName==="BUTTON")return;
+        const k=el.dataset.kind||"";
+        if(k==="video"||k==="audio"){play(rel);}
+        else if(k==="image"){viewImage(rel,el.dataset.name||"");}
       });
     }
   });
