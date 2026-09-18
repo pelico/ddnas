@@ -1760,6 +1760,7 @@ function renderMonitor(s){
     sub:"负载 "+(cpu.load1||0).toFixed(2),
     metrics:[
       {k:"5m",v:(cpu.load5||0).toFixed(2)},
+      {k:"15m",v:(cpu.load15||0).toFixed(2)},
       {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
     ]
   });
@@ -1783,18 +1784,34 @@ function renderMonitor(s){
       {k:"累计↑",v:fmtBytes(+net.tx_bytes||0)}
     ]
   });
-  // 温度：主数值 + 传感器次指标。无百分比，无横条
-  let maxTemp=0;
-  (s.temps||[]).forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;}});
+  // 温度：当前各传感器瞬时读数（无历史库，"最高"仅指本次采样内最大值，副行列每个传感器明细）
+  const temps=(s.temps||[]).filter(function(t){return +t.value>0;});
+  let maxTemp=0;temps.forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;}});
   const tempHtml=mStatHTML({
     ico:"🌡",title:"温度",
     right:maxTemp>0?maxTemp.toFixed(1)+"°":"—",
-    metrics:maxTemp>0?[
-      {k:"最高",v:maxTemp.toFixed(1)+"°C"},
-      {k:"传感器",v:(s.temps||[]).length+"个"}
-    ]:[{k:"提示",v:"无 hwmon"}]
+    sub:maxTemp>0?("当前最高 "+maxTemp.toFixed(1)+"°C"):"无 hwmon",
+    metrics:temps.length?temps.map(function(t){
+      return{k:(t.name||"传感器"),v:(+t.value).toFixed(1)+"°C"};
+    }):[{k:"提示",v:"无 hwmon 传感器"}]
   });
-  box.innerHTML=cpuHtml+memHtml+netHtml+tempHtml;
+  // 磁盘：主盘用量%为主值（横条），副行列出各已挂载盘当前用量与可用空间
+  const disks=(s.disks||[]).filter(function(d){return +d.total_bytes>0;});
+  let diskMain=null;disks.forEach(function(d){if(!diskMain||+d.total_bytes>+diskMain.total_bytes)diskMain=d;});
+  const dt=diskMain?+diskMain.total_bytes:0, du=diskMain?+diskMain.used_bytes:0;
+  const diskPct=dt>0?du/dt*100:0;
+  const diskHtml=mStatHTML({
+    ico:"💿",title:"磁盘",percent:diskPct,
+    right:diskPct>0?diskPct.toFixed(0)+"%":"—",
+    sub:"可用 "+fmtBytes(Math.max(0,dt-du)),
+    metrics:disks.slice(0,6).map(function(d){
+      const t=+d.total_bytes||0,u=+d.used_bytes||0,p=t>0?u/t*100:0;
+      const seg=(d.mountpoint||"").split("/").filter(Boolean).pop();
+      const nm=seg||d.mountpoint||d.device||"盘";
+      return{k:nm,v:p.toFixed(0)+"%"};
+    })
+  });
+  box.innerHTML=cpuHtml+memHtml+netHtml+tempHtml+diskHtml;
 }
 
 /* ========= 文件浏览 ========= */
