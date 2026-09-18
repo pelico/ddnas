@@ -2,6 +2,7 @@ package io.github.pelico.ddnas
 
 import android.app.Notification
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
@@ -32,8 +33,15 @@ import java.net.URLEncoder
  */
 class BackupService : Service() {
 
-    private val app: DdnasApplication get() = application as DdnasApplication
+    private val app: DdnasApplication get() = (workerCtx ?: application) as DdnasApplication
     private val client: OkHttpClient get() = app.okHttpClient
+
+    /** Worker 直接 new BackupService() 时没有系统注入的 context，
+     *  用此字段承载外部传入的 applicationContext；正常 Service 生命周期下为 null，
+     *  ctx 属性回退到 this（Service 自身）。 */
+    private var workerCtx: Context? = null
+    private val ctx: Context get() = workerCtx ?: this
+    private val resolver get() = ctx.contentResolver
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,19 +65,19 @@ class BackupService : Service() {
     }
 
     private suspend fun runBackup(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
-        val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
+        val manifest = BackupManifest(ctx, treeUri.toString(), remoteBase)
         val startTime = System.currentTimeMillis()
         val failedFiles = mutableListOf<String>()
         try {
             // 持久化 SAF 权限，避免重启后失效
             try {
-                contentResolver.takePersistableUriPermission(
+                resolver.takePersistableUriPermission(
                     treeUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: Exception) { }
 
-            val root = DocumentFile.fromTreeUri(this, treeUri) ?: run {
+            val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: run {
                 _progress.value = Progress.Error("无法访问所选目录"); return
             }
             if (!root.isDirectory) {
@@ -186,12 +194,15 @@ class BackupService : Service() {
      * 不涉及 Service 生命周期（无 stopSelf / startForeground），
      * 进度通过 [progress] StateFlow 暴露给 UI。
      */
-    suspend fun runBackupForWorker(treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
+    suspend fun runBackupForWorker(ctx: Context, treeUri: Uri, origin: String, cookie: String, remoteBase: String) {
+        this.workerCtx = ctx
         running = true
         cancelled = false
+        val startTime = System.currentTimeMillis()
+        val failedFiles = mutableListOf<String>()
         try {
-            val manifest = BackupManifest(this, treeUri.toString(), remoteBase)
-            val root = DocumentFile.fromTreeUri(this, treeUri) ?: return
+            val manifest = BackupManifest(ctx, treeUri.toString(), remoteBase)
+            val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: return
             if (!root.isDirectory) return
             _progress.value = Progress.Scanning
             val all = ArrayList<Pair<DocumentFile, String>>()
@@ -217,7 +228,7 @@ class BackupService : Service() {
                 val parent = dest.substringBeforeLast('/').trimEnd('/')
                 if (parent.isNotEmpty() && parent != remoteBase.trimEnd('/')) {
                     val pErr = ensureRemoteDirs(origin, cookie, remoteBase, parent, mkdirCache)
-                    if (pErr != null) { failed++; done++; _progress.value = Progress.Running(done, total, "目录创建失败: $pErr"); continue }
+                    if (pErr != null) { failed++; failedFiles.add(rel); done++; _progress.value = Progress.Running(done, total, "目录创建失败: $pErr"); continue }
                 }
                 var ok = false
                 for (attempt in 0..2) {
@@ -226,10 +237,12 @@ class BackupService : Service() {
                     if (ok) break
                     if (attempt < 2) try { kotlinx.coroutines.delay(1000L shl attempt) } catch (_: Exception) { break }
                 }
-                if (ok) manifest.markUploaded(rel, file.length(), file.lastModified()) else failed++
+                if (ok) manifest.markUploaded(rel, file.length(), file.lastModified()) else { failed++; failedFiles.add(rel) }
                 done++
                 _progress.value = Progress.Running(done, total, file.name ?: rel)
             }
+            // 上报备份历史到中间件 SQLite（与 runBackup 一致）
+            reportHistory(origin, cookie, startTime, total, done - failed, failed, failedFiles, treeUri.toString(), remoteBase)
             if (failed == total) { _progress.value = Progress.Error("全部 $failed 个文件上传失败") }
             else { _progress.value = Progress.Done("备份完成：上传 $done 个${if (failed > 0) "，失败 $failed 个" else ""}") }
         } catch (e: Exception) {
@@ -349,7 +362,7 @@ class BackupService : Service() {
             override fun contentType() = "application/octet-stream".toMediaType()
             override fun contentLength(): Long = length
             override fun writeTo(sink: okio.BufferedSink) {
-                contentResolver.openInputStream(file.uri)?.use { input: InputStream ->
+                resolver.openInputStream(file.uri)?.use { input: InputStream ->
                     val buf = ByteArray(64 * 1024)
                     var sent = 0L
                     var lastReport = 0L

@@ -50,6 +50,7 @@ class BackupWorker(
         return try {
             val service = BackupService()
             service.runBackupForWorker(
+                ctx,
                 Uri.parse(cfg.treeUri),
                 origin,
                 cookie,
