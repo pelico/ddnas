@@ -175,6 +175,11 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd);
 }
 .file-top{display:flex;align-items:center;gap:10px;min-height:46px}
+.sortbar{display:flex;align-items:center;gap:6px;padding:4px 0 0;flex-wrap:wrap}
+.sortbar .sort-label{font-size:12px;color:var(--muted);margin-right:2px}
+.sortbar .sort-btn{font-size:12px;padding:5px 10px;border-radius:8px;color:var(--muted);background:var(--surface2);border:1px solid var(--bd)}
+.sortbar .sort-btn.active{color:#fff;background:var(--accent);border-color:var(--accent)}
+.sortbar .sort-dir{min-width:32px;padding:5px 8px}
 .file-top .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px}
 /* 路径字体放大到 15px：手机端单手阅读更舒适；加粗保持视觉层级 */
 .file-top .path{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
@@ -478,6 +483,13 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       <input type="file" id="upfile" hidden multiple onchange="upload(this)">
     </div>
     <div class="crumb" id="crumb"></div>
+    <div class="sortbar">
+      <span class="sort-label">排序</span>
+      <button class="sort-btn" data-sort="name" onclick="setSort('name')">名称</button>
+      <button class="sort-btn" data-sort="size" onclick="setSort('size')">大小</button>
+      <button class="sort-btn" data-sort="time" onclick="setSort('time')">时间</button>
+      <button class="sort-btn sort-dir" id="sort-dir" onclick="toggleSortDir()" title="切换排序方向">▼</button>
+    </div>
   </div>
   <div id="dir-actions" style="padding:6px 14px 2px;display:flex;gap:8px;flex-wrap:wrap">
     <button id="add-dir-audio" class="dl-act" style="display:none" onclick="addCurDirAudios()">＋ 把此目录音频加入播放列表</button>
@@ -1680,9 +1692,118 @@ function renderMonitor(s){
 let curFiles="";
 let curItems=[];  // 当前目录的文件项（供音乐播放器筛选同目录音频）
 let filesLoadedEver=false;
+// 文件列表排序偏好：field ∈ name/size/time，asc 为 true 表示升序（.slice().sort 用 a-b 约定）
+let sortField=localStorage.getItem("ddnas_file_sort")||"name";
+let sortAsc=localStorage.getItem("ddnas_file_sort_dir")!=="desc";
+function setSort(f){
+  sortField=f;
+  localStorage.setItem("ddnas_file_sort",f);
+  if(curItems.length)applyFileSort();
+  renderSortBar();
+}
+function toggleSortDir(){
+  sortAsc=!sortAsc;localStorage.setItem("ddnas_file_sort_dir",sortAsc?"asc":"desc");
+  if(curItems.length)applyFileSort();
+  renderSortBar();
+}
+function renderSortBar(){
+  document.querySelectorAll(".sort-btn[data-sort]").forEach(b=>{
+    b.classList.toggle("active",b.dataset.sort===sortField);
+  });
+  const sd=document.getElementById("sort-dir");
+  if(sd)sd.textContent=sortAsc?"▲":"▼";
+}
+// 统一排序入口：目录优先，再按所选字段排序。
+// curItems 保持 loadFiles 时的原始加载顺序（供音乐播放器筛选），排序只影响渲染。
+let filesBodyEl=null;  // 当前列表容器引用，setSort/toggle 后重渲染用
+function applyFileSort(){
+  const sorted=curItems.slice().sort(function(a,b){
+    const da=(a.is_dir||a.type==="folder"||(a.is_dir==null&&String(a.name||"").lastIndexOf(".")<0))?1:0;
+    const db=(b.is_dir||b.type==="folder"||(b.is_dir==null&&String(b.name||"").lastIndexOf(".")<0))?1:0;
+    if(da!==db)return db-da;
+    let cmp=0;
+    if(sortField==="size"){
+      cmp=((+a.size)||0)-((+b.size)||0);
+    }else if(sortField==="time"){
+      cmp=tsOf(a)-tsOf(b);
+    }else{
+      cmp=String(a.name||"").localeCompare(String(b.name||""));
+    }
+    return sortAsc?cmp:-cmp;
+  });
+  renderFileList(filesBodyEl||document.getElementById("files-body"),sorted);
+}
+// 解析文件项的修改/创建时间为毫秒时间戳（后端返回 ISO 串或数值）
+function tsOf(it){
+  const v=it.modified||it.modified_at||it.created||it.mtime||it.timestamp||"";
+  if(!v)return 0;
+  if(typeof v==="number")return v>1e12?v:v*1000;
+  const t=Date.parse(v);return isNaN(t)?0:t;
+}
+// 渲染文件列表（sorted 为已排序数组）；loadFiles 和 setSort/toggleSortDir 共用。
+function renderFileList(body,items){
+  if(!items.length){body.innerHTML='<div class="empty">空目录</div>';renderSortBar();return;}
+  body.innerHTML='<div class="flist">'+items.map(function(it){
+    const name=esc(it.name||"");
+    const isDir=!!(it.is_dir||it.type==="folder");
+    const size=+it.size||0;
+    const mt=it.modified||it.modified_at||it.created||"";
+    const sub=(isDir?"":fmtBytes(size))+(mt?" / "+String(mt).slice(0,16):"");
+    const rel=joinPath(curFiles,it.name||"");
+    if(isDir){
+      return '<div class="fitem" data-rel="'+esc(rel)+'" data-type="dir">'+
+        '<div class="fic dir">📂</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+
+        '<button class="fbtn" data-type="enter">进入</button></div>';
+    }
+    var kind=mediaExt(it.name||"");
+    var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
+    var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
+    var btn=(kind==="video")
+      ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button>'
+      :(kind==="audio"
+        ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button><button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="addmusic" title="加入播放列表" style="min-width:36px">＋</button>'
+        :(kind==="image"
+          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
+          :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>'));
+    return '<div class="fitem" data-type="file">'+
+      '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
+  }).join("")+"</div>";
+
+  body.querySelectorAll(".fitem").forEach(el=>{
+    const t=el.dataset.type;
+    const rel=el.dataset.rel||"";
+    if(t==="dir"){
+      el.addEventListener("click",e=>{
+        if(e.target.dataset.type==="enter"||e.target.tagName!=="BUTTON")loadFiles(rel);
+      });
+    }
+  });
+  body.querySelectorAll('button[data-type="play"]').forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();play(b.dataset.rel||"");
+    });
+  });
+  body.querySelectorAll('button[data-type="addmusic"]').forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();addMusicPageItem(b.dataset.rel||"",b.dataset.name||"");
+    });
+  });
+  body.querySelectorAll('button[data-type="view"]').forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();viewImage(b.dataset.rel||"",b.dataset.name||"");
+    });
+  });
+  body.querySelectorAll('button[data-type="download"]').forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();downloadFile(b.dataset.rel||"",b.dataset.name||"");
+    });
+  });
+  renderSortBar();
+}
 function loadFiles(p){
   curFiles=p||"";filesLoadedEver=true;
   const body=document.getElementById("files-body");
+  filesBodyEl=body;
   // 加载新目录时先隐藏整目录加入按钮，避免旧目录残留
   const addBtn0=document.getElementById("add-dir-audio");
   if(addBtn0)addBtn0.style.display="none";
@@ -1705,72 +1826,14 @@ function loadFiles(p){
   fetch("/portal/api/files/list?path="+encodeURIComponent(curFiles)).then(r=>{
     if(!r.ok)throw new Error("HTTP "+r.status);return r.json();
   }).then(resp=>{
-    const items=(resp.items||[]).slice().sort((a,b)=>{
-      const da=a.is_dir||a.type==="folder"||(a.is_dir==null&&String(a.name||"").lastIndexOf(".")<0)?1:0;
-      const db=b.is_dir||b.type==="folder"||(b.is_dir==null&&String(b.name||"").lastIndexOf(".")<0)?1:0;
-      if(da!==db)return db-da;return String(a.name||"").localeCompare(String(b.name||""));
-    });
-    curItems=items;  // 存当前目录文件项，供音乐播放器生成同目录播放列表
+    curItems=(resp.items||[]);  // 存当前目录原始文件项，供音乐播放器筛选同目录音频
     // 此目录含音频时显示「整目录加入播放列表」按钮
-    const hasAudio=items.some(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
+    const hasAudio=curItems.some(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
     const addBtn=document.getElementById("add-dir-audio");
     if(addBtn)addBtn.style.display=hasAudio?"":"none";
-    if(!items.length){body.innerHTML='<div class="empty">空目录</div>';return;}
-    body.innerHTML='<div class="flist">'+items.map(function(it){
-      const name=esc(it.name||"");
-      const isDir=!!(it.is_dir||it.type==="folder");
-      const size=+it.size||0;
-      const mt=it.modified||it.modified_at||it.created||"";
-      const sub=(isDir?"":fmtBytes(size))+(mt?" / "+String(mt).slice(0,16):"");
-      const rel=joinPath(curFiles,it.name||"");
-      if(isDir){
-        return '<div class="fitem" data-rel="'+esc(rel)+'" data-type="dir">'+
-          '<div class="fic dir">📂</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+
-          '<button class="fbtn" data-type="enter">进入</button></div>';
-      }
-      var kind=mediaExt(it.name||"");
-      var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
-      var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
-      var btn=(kind==="video")
-        ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button>'
-        :(kind==="audio"
-          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button><button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="addmusic" title="加入播放列表" style="min-width:36px">＋</button>'
-          :(kind==="image"
-            ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
-            :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>'));
-      return '<div class="fitem" data-type="file">'+
-        '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
-    }).join("")+"</div>";
-
-    body.querySelectorAll(".fitem").forEach(el=>{
-      const t=el.dataset.type;
-      const rel=el.dataset.rel||"";
-      if(t==="dir"){
-        el.addEventListener("click",e=>{
-          if(e.target.dataset.type==="enter"||e.target.tagName!=="BUTTON")loadFiles(rel);
-        });
-      }
-    });
-    body.querySelectorAll('button[data-type="play"]').forEach(b=>{
-      b.addEventListener("click",e=>{
-        e.stopPropagation();play(b.dataset.rel||"");
-      });
-    });
-    body.querySelectorAll('button[data-type="addmusic"]').forEach(b=>{
-      b.addEventListener("click",e=>{
-        e.stopPropagation();addMusicPageItem(b.dataset.rel||"",b.dataset.name||"");
-      });
-    });
-    body.querySelectorAll('button[data-type="view"]').forEach(b=>{
-      b.addEventListener("click",e=>{
-        e.stopPropagation();viewImage(b.dataset.rel||"",b.dataset.name||"");
-      });
-    });
-    body.querySelectorAll('button[data-type="download"]').forEach(b=>{
-      b.addEventListener("click",e=>{
-        e.stopPropagation();downloadFile(b.dataset.rel||"",b.dataset.name||"");
-      });
-    });
+    if(!curItems.length){body.innerHTML='<div class="empty">空目录</div>';renderSortBar();return;}
+    // 排序并渲染（默认目录优先+文件名，或用户上次选择的字段）
+    applyFileSort();
   }).catch(function(e){
     body.innerHTML='<div class="err">文件适配器未启用或获取失败：'+esc(e.message)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
   });
