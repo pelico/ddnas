@@ -367,7 +367,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* App WebView 里 vh 单位不可靠（与 position:fixed 实际可视矩形不一致，
    同 .bk-browse-card 的 height:80vh 问题），导致 max-height:40vh 把列表压扁看不见。
    改用固定 max-height；min-height 保证至少能看到一行 */
-.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:40;background:var(--card);border-top:1px solid var(--bd);max-height:240px;min-height:80px;overflow:auto;padding:6px 0;display:none;box-shadow:0 -2px 12px rgba(0,0,0,.12)}
+.music-list{position:fixed;left:0;right:0;bottom:166px;z-index:40;background:var(--card);border-top:1px solid var(--bd);max-height:240px;min-height:80px;overflow:auto;padding:6px 0;display:none;box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .music-list.show{display:block}
 .music-list .mi{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:13px;cursor:pointer}
 .music-list .mi.cur{background:var(--surface2);color:var(--accent);font-weight:600}
