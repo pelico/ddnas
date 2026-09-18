@@ -99,6 +99,31 @@ class BackupManifest(context: Context, treeUri: String, remoteBase: String) {
 
     fun clear() = prefs.edit().clear().apply()
 
+    /** 当前命名空间下失败黑名单的全部文件（path,size,mtime）。
+     *  供 portal 备份页的「失败文件」区列出具体是哪些文件失败，便于定位。 */
+    fun failedEntries(): List<Triple<String, Long, Long>> {
+        val out = ArrayList<Triple<String, Long, Long>>()
+        val all = prefs.all
+        for ((k, v) in all) {
+            if (!k.startsWith(failedPrefix) || v !is String) continue
+            val rel = k.substring(failedPrefix.length)
+            val parts = v.split("|")
+            if (parts.size != 2) continue
+            val size = parts[0].toLongOrNull() ?: continue
+            val mtime = parts[1].toLongOrNull() ?: continue
+            out.add(Triple(rel, size, mtime))
+        }
+        out.sortBy { it.first }
+        return out
+    }
+
+    /** 移除某文件的失败黑名单记录并返回是否移除成功。用于 portal「移出黑名单并重试」。 */
+    fun unmarkFailed(relPath: String): Boolean {
+        val had = prefs.contains(failedPrefix + relPath)
+        if (had) prefs.edit().remove(failedPrefix + relPath).apply()
+        return had
+    }
+
     /** 序列化当前命名空间的条目为 JSON，用于上传到远端做 manifest 同步。
      * 格式: {"version":2,"entries":{"relPath":"size|mtime",...},"failed":{"relPath":"size|mtime",...}} */
     fun toJson(): String {

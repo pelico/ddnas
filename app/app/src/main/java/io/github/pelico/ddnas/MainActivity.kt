@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import io.github.pelico.ddnas.data.BackupManifest
 import io.github.pelico.ddnas.data.Server
 import io.github.pelico.ddnas.data.ServerStore
 import io.github.pelico.ddnas.ui.theme.DDNASTheme
@@ -429,6 +430,34 @@ class MainActivity : ComponentActivity() {
             kotlinx.coroutines.runBlocking { backupStore.setAutoBackup(on) }
             if (on) BackupWorker.enable(this@MainActivity)
             else BackupWorker.disable(this@MainActivity)
+        }
+
+        /** 返回当前备份命名空间下的失败黑名单 JSON：[{rel,size,mtime},...]。
+         *  portal 备份页「失败文件」区调用，定位具体哪些文件上传失败。 */
+        @JavascriptInterface
+        fun getBackupFailedList(): String {
+            return try {
+                val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+                if (cfg.treeUri.isEmpty()) return "[]"
+                val m = BackupManifest(this@MainActivity, cfg.treeUri, cfg.remoteBase)
+                val arr = m.failedEntries().map { (rel, size, mtime) ->
+                    """{"rel":"${escJSON(rel)}","size":$size,"mtime":$mtime}"""
+                }
+                "[" + arr.joinToString(",") + "]"
+            } catch (e: Exception) {
+                android.util.Log.w("DDNAS-Backup", "getBackupFailedList fail", e)
+                "[]"
+            }
+        }
+
+        /** 把指定失败文件移出黑名单（下次备份重新尝试上传）。 */
+        @JavascriptInterface
+        fun unmarkBackupFailed(rel: String) {
+            try {
+                val cfg = kotlinx.coroutines.runBlocking { backupStore.get() }
+                if (cfg.treeUri.isEmpty()) return
+                BackupManifest(this@MainActivity, cfg.treeUri, cfg.remoteBase).unmarkFailed(rel)
+            } catch (_: Exception) {}
         }
 
         /** App 内查看图片：启动 ImageActivity 全屏 WebView 加载（注入 cookie）。

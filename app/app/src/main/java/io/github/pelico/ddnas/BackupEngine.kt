@@ -109,6 +109,7 @@ class BackupEngine(
                     append("无需备份（$skipped 个文件未变更")
                     if (blacklisted > 0) append("，$blacklisted 个上次失败已跳过")
                     append("）")
+                    appendFailedNames(manifest.failedEntries().map { it.first })
                 }
                 emit(BackupService.Progress.Done(msg))
                 return Result.Success
@@ -212,6 +213,7 @@ class BackupEngine(
                 if (skipped + skippedRemote > 0) append("，跳过 ${skipped + skippedRemote} 个（未变更/远端已存在）")
                 if (blacklisted > 0) append("，$blacklisted 个上次失败已跳过")
                 if (failed > 0) append("，失败 $failed 个")
+                appendFailedNames(failedFiles)
             }
             // 上报备份历史到中间件 SQLite
             if (reportHistory) {
@@ -245,6 +247,17 @@ class BackupEngine(
             if (child.isDirectory) collect(child, rel, out)
             else if (child.isFile) out.add(child to rel)
         }
+    }
+
+    /** 在提示信息末尾附上失败文件名，方便用户定位具体是哪些文件。
+     *  文件多时只列前几个 + 总数，避免提示被超长文件名刷屏。 */
+    private fun StringBuilder.appendFailedNames(names: List<String>) {
+        val list = names.distinct()
+        if (list.isEmpty()) return
+        val show = minOf(list.size, 5)
+        val sample = list.take(show).joinToString("、")
+        val tail = if (list.size > show) " 等 ${list.size} 个" else ""
+        append("\n失败文件：$sample$tail")
     }
 
     /** 备份完成后上报历史到中间件 SQLite，供 portal 查看历史与失败文件列表。 */
