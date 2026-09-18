@@ -189,16 +189,14 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .sortbar .sort-btn{font-size:12px;padding:5px 10px;border-radius:8px;color:var(--muted);background:var(--surface2);border:1px solid var(--bd)}
 .sortbar .sort-btn.active{color:#fff;background:var(--accent);border-color:var(--accent)}
 .sortbar .sort-dir{min-width:32px;padding:5px 8px}
-.file-top .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px}
-/* 路径字体放大到 15px：手机端单手阅读更舒适；加粗保持视觉层级 */
-.file-top .path{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
-.file-top .up{background:var(--accent);color:#fff;border-radius:12px;padding:9px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px;font-weight:600;min-height:36px}
-.file-top .up:disabled{background:var(--muted2);opacity:.5;cursor:not-allowed}
-/* 面包屑：字体 13px + 可点击块加 padding，手机端点击不费力；保留分隔符与高亮色 */
-.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;color:var(--muted);font-size:13px;line-height:1.5;overflow-x:auto;padding:2px 0}
-.crumb a{color:var(--accent);white-space:nowrap;padding:4px 6px;border-radius:6px;-webkit-tap-highlight-color:transparent}
-.crumb a:active{background:var(--chip)}
-.crumb .sep{color:var(--muted2);padding:0 1px}
+.file-top .back{width:40px;height:40px;border-radius:12px;background:var(--surface2);border:1px solid var(--bd);display:inline-flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+/* 面包屑合并进顶栏一行：中间自适应 + 超长横向滚动，两端固定返回/上传 */
+.file-top .crumb{flex:1;min-width:0;flex-wrap:nowrap;font-size:13px;line-height:1.5;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:none;-ms-overflow-style:none;padding:2px 0}
+.file-top .crumb::-webkit-scrollbar{display:none}
+.file-top .crumb a{color:var(--accent);white-space:nowrap;padding:4px 6px;border-radius:6px;-webkit-tap-highlight-color:transparent}
+.file-top .crumb a:active{background:var(--chip)}
+.file-top .crumb .sep{color:var(--muted2);padding:0 1px}
+.file-top .up{background:var(--accent);color:#fff;border-radius:12px;padding:9px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px;font-weight:600;min-height:36px;flex-shrink:0}
 #files-body{padding:4px 14px 12px}
 .flist{display:flex;flex-direction:column;gap:6px}
 .fitem{
@@ -504,11 +502,10 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <div class="file-bar">
     <div class="file-top">
       <button class="back" onclick="goUp()" title="上级">←</button>
-      <div class="path" id="file-path">/</div>
+      <div class="crumb" id="crumb"></div>
       <button class="up" id="up-btn" onclick="document.getElementById('upfile').click()">⬆ 上传</button>
       <input type="file" id="upfile" hidden multiple onchange="upload(this)">
     </div>
-    <div class="crumb" id="crumb"></div>
     <div class="sortbar">
       <span class="sort-label">排序</span>
       <button class="sort-btn" data-sort="name" onclick="setSort('name')">名称</button>
@@ -1922,7 +1919,7 @@ function loadFiles(p){
   const addBtn0=document.getElementById("add-dir-audio");
   if(addBtn0)addBtn0.style.display="none";
   const pathEl=document.getElementById("file-path");
-  pathEl.textContent="/"+(curFiles||"");
+  if(pathEl)pathEl.textContent="/"+(curFiles||"");
   const upBtn=document.getElementById("up-btn");
   if(upBtn){
     // 根目录禁用上传：OpenList 根目录通常是只读挂载（挂的是其他盘的根，无写入空间），
