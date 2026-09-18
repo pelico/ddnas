@@ -361,7 +361,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
   background:var(--card);border-top:1px solid var(--bd);
-  display:grid;grid-template-columns:repeat(4,1fr);
+  display:grid;grid-template-columns:repeat(5,1fr);
   padding-bottom:env(safe-area-inset-bottom);
 }
 .tabbar button{
@@ -606,10 +606,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   </div>
 </section>
 
-<!-- ========== 下载页（DDM3U8 任务管理，从首页宫格进入） ========== -->
+<!-- ========== 下载页（DDM3U8 任务管理，底部 tab 进入） ========== -->
 <section id="view-download" class="hidden">
   <div class="dl-bar">
-    <button class="back" onclick="setTab('home')" title="返回首页">←</button>
     <div class="dl-title">下载任务</div>
     <button class="dl-refresh" onclick="refreshDownloadNow()" title="刷新">↻</button>
   </div>
@@ -657,6 +656,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
   <button id="tab-music" onclick="setTab('music')"><span class="ic">🎵</span><span class="lb">播放</span></button>
+  <button id="tab-download" onclick="setTab('download')"><span class="ic">⬇️</span><span class="lb">下载</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
 
@@ -815,13 +815,13 @@ if(typeof ddnas==="undefined"){
 let curTab="home";
 function setTab(t){
   curTab=t;
-  // view 容器：含 download/music（download 非 tabbar 页，从首页宫格进入）
+  // view 容器：含 download/music（download/music 皆为底部 tab 页）
   ["home","files","me","download","music"].forEach(k=>{
     const el=document.getElementById("view-"+k);
     if(el)el.classList.toggle("hidden",k!==t);
   });
-  // tabbar 高亮：home/files/music/me 四栏，download 不高亮任何 tab
-  ["home","files","music","me"].forEach(k=>{
+  // tabbar 高亮：home/files/music/download/me 五栏
+  ["home","files","music","download","me"].forEach(k=>{
     const el=document.getElementById("tab-"+k);
     if(el)el.classList.toggle("on",k===t);
   });
@@ -1366,16 +1366,23 @@ function loadDownloadTasks(){
       const [bc,bl]=dlStatusBadge(t.status);
       const ct=fmtBackupTime(t.created_at?Date.parse(t.created_at):0);
       const log=t.log?('<div class="dl-task-log">'+esc(t.log)+'</div>'):'';
-      // 操作按钮：按状态显示可用动作
-      // 取消 = 停止进行中的下载（cancel action），删除 = 移除已结束任务的记录（clear-selected）
       const st=t.status;
+      // 操作按钮严格对齐 go-core 各动作的状态守卫（task.go 的 Pause/Cancel/Resume/Merge）：
+      //   暂停/取消 → 下载中/排队中/合并中/转换中/等待FFmpeg
+      //   恢复       → 已暂停
+      //   重试       → 失败/已取消（重新入队，断点续传）
+      //   强合       → 失败/已暂停（复用已下载分片重新合并，DDM3U8 中断恢复入口）
+      //   删除       → 已完成/失败/已取消（clear-selected，仅清记录，区别于 cancel）
+      const activeLike=["下载中","排队中","合并中","转换中","等待FFmpeg"];
+      const finished=["已完成","失败","已取消"];
       let acts='<div class="dl-actions">';
       if(st==="下载中"||st==="合并中"||st==="转换中")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'pause\')">暂停</button>';
+      if(activeLike.includes(st))acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
       if(st==="已暂停")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'resume\')">恢复</button>';
-      // 活跃任务 → 取消：停止下载（pause/resume 对已暂停也保留取消入口）
-      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中"||st==="等待FFmpeg")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
-      // 已结束任务 → 删除：清除记录（与取消区分，不再误调 cancel）
-      if(st==="已完成"||st==="失败"||st==="已取消")acts+='<button class="dl-act danger" onclick="deleteTask(\''+esc(tid)+'\')">删除</button>';
+      if(st==="失败"||st==="已取消")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'resume\')">重试</button>';
+      // 强合：下载中断/合并失败时复用已下载分片重新合并（README 明确入口）
+      if(st==="失败"||st==="已暂停")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'merge\')">强合</button>';
+      if(finished.includes(st))acts+='<button class="dl-act danger" onclick="deleteTask(\''+esc(tid)+'\')">删除</button>';
       acts+='</div>';
       return '<div class="dl-task"><div class="dl-task-head"><span class="dl-task-name">'+name+'</span><span class="dl-badge '+bc+'">'+esc(bl)+'</span></div><div class="dl-task-meta"><span>'+ct+'</span></div>'+log+acts+'</div>';
     }).join("");
@@ -1449,7 +1456,7 @@ function submitDownload(){
 // 任务操作：pause/resume/cancel/merge，POST JSON {action:...} 到 /download/task/<id>
 function taskAction(tid,action){
   if(!tid)return;
-  const tip={pause:"暂停",resume:"恢复",cancel:"取消",merge:"合并"}[action]||action;
+  const tip={pause:"暂停",resume:"继续",cancel:"取消",merge:"强合"}[action]||action;
   fetch("/portal/api/download/task/"+encodeURIComponent(tid),{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({action:action})
