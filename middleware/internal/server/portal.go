@@ -365,11 +365,12 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   padding-bottom:env(safe-area-inset-bottom);
 }
 .tabbar button{
-  display:flex;flex-direction:column;align-items:center;gap:3px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
   padding:8px 0 6px;color:var(--muted2);
 }
-.tabbar button .ic{font-size:22px;line-height:1}
-.tabbar button .lb{font-size:11px}
+/* 图标槽固定行高 + 居中，避免不同 emoji 渲染盒高度不一导致文字错位 */
+.tabbar button .ic{font-size:22px;line-height:1;height:22px;display:flex;align-items:center;justify-content:center}
+.tabbar button .lb{font-size:11px;line-height:1}
 .tabbar button.on{color:var(--accent)}
 
 /* ===== 下载页（DDM3U8 任务管理） ===== */
