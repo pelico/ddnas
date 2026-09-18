@@ -19,7 +19,10 @@ import (
 )
 
 const sessionCookie = "ddnas_admin"
-const sessionTTL = 12 * time.Hour
+// 会话有效期：90 天。原 12 小时太短，用户反馈登录太频繁。
+// 配合 loggedIn 里的滑动续期：每次活跃请求都把过期时间往后推，
+// 长期使用的 App/Web 不会突然掉线；仅 90 天不访问才需重新登录。
+const sessionTTL = 90 * 24 * time.Hour
 
 // Admin 配置控制台。
 type Admin struct {
@@ -363,9 +366,15 @@ func (a *Admin) loggedIn(r *http.Request) bool {
 		return false
 	}
 	exp, _ := v.(time.Time)
-	if time.Now().After(exp) {
+	now := time.Now()
+	if now.After(exp) {
 		a.sessions.Delete(c.Value)
 		return false
+	}
+	// 滑动续期：剩余有效期不足一半时，把过期时间往后推一个完整 TTL。
+	// 避免长时间活跃的用户/App 在使用中途（如备份进行中）session 突然过期。
+	if exp.Sub(now) < sessionTTL/2 {
+		a.sessions.Store(c.Value, now.Add(sessionTTL))
 	}
 	return true
 }

@@ -12,6 +12,7 @@
 package ddm3u8
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -124,21 +125,40 @@ func (a *Adapter) handleTaskAction(w http.ResponseWriter, r *http.Request) {
 
 // proxyTo 把当前请求转发到 DDM3U8 的 upstreamPath。
 // 鉴权由本层注入，前端/外部调用方无需带 Basic Auth。
+//
+// body 处理：对带 body 的请求（POST/PUT/PATCH，如 form-data 提交下载任务），
+// 先把 r.Body 完整读到内存 bytes.Buffer 再转发，而非流式透传。原因：
+// 流式透传 r.Body 时，Go http.Client 在某些边界条件下（Flask 读取慢、
+// chunked vs Content-Length 不一致、r.Body 提前关闭）会导致 multipart/form-data
+// body 不完整到达 DDM3U8，Flask request.form 解析失败，DDM3U8 收不到
+// url/name/sub_path 字段 → 无法拼临时目录路径 → 不建立临时文件夹 → 任务创建失败。
+// 缓冲到 bytes.Buffer 后 Content-Length 可靠、body 完整，彻底避免该问题。
+// 下载任务提交的 form-data 通常很小（几个字段），缓冲无内存压力。
 func (a *Adapter) proxyTo(upstreamPath string, w http.ResponseWriter, r *http.Request) {
 	if a.endpoint == "" {
 		writeErr(w, http.StatusServiceUnavailable, "DDM3U8 适配器未初始化")
 		return
 	}
 	url := a.endpoint + upstreamPath
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, r.Body)
+	// 有 body 的请求：缓冲完整 body 再转发，确保 form-data 完整到达 DDM3U8
+	var bodyReader io.Reader = nil
+	contentLength := r.ContentLength
+	if r.Body != nil && r.ContentLength != 0 {
+		buf, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "读取请求体失败: "+err.Error())
+			return
+		}
+		r.Body.Close()
+		bodyReader = bytes.NewReader(buf)
+		contentLength = int64(len(buf))
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, bodyReader)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "构造上游请求失败: "+err.Error())
 		return
 	}
-	// 透传 Content-Length：form-data 必须带正确长度，否则 http client 用 chunked
-	// 传输，Flask request.form 解析失败，DDM3U8 收不到 url/sub_path 等字段，
-	// 报"URL不能为空"或无法创建临时目录
-	req.ContentLength = r.ContentLength
+	req.ContentLength = contentLength
 	if a.user != "" || a.pass != "" {
 		req.SetBasicAuth(a.user, a.pass)
 	}

@@ -47,7 +47,7 @@ func (a *Adapter) ConfigSchema() []plugin.ConfigField {
 }
 
 func (a *Adapter) Init(raw map[string]any) error {
-	a.endpoint = strField(raw, "endpoint", "http://127.0.0.1:5244")
+	a.endpoint = normalizeEndpoint(strField(raw, "endpoint", "http://127.0.0.1:5244"))
 	a.token = strField(raw, "token", "")
 	a.root = strField(raw, "root", "/")
 	if a.root == "" {
@@ -90,7 +90,7 @@ func (a *Adapter) Routes() []plugin.Route {
 // Test 以临时 client 探测 OpenList/AList：调用 /api/fs/list(path=root)，
 // 解析 {code,message}，code==200 视为成功，否则展示错误提示；含耗时。
 func (a *Adapter) Test(raw map[string]any) plugin.TestResult {
-	endpoint := strings.TrimSpace(strField(raw, "endpoint", ""))
+	endpoint := normalizeEndpoint(strings.TrimSpace(strField(raw, "endpoint", "")))
 	token := strField(raw, "token", "")
 	root := strField(raw, "root", "/")
 	if root == "" {
@@ -344,6 +344,19 @@ func (a *Adapter) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, fmt.Sprintf("OpenList 上传失败(%d): %s", resp.StatusCode, string(body)))
 		return
 	}
+	// OpenList/AList 用 {"code":200,...} 表示业务结果，HTTP 恒 200；
+	// code 非 0 且非 200 视为业务失败（如空间不足/无权限/路径非法），
+	// 避免 HTTP 200 但实际写入失败时谎报 ok:true，导致 App 端 markUploaded
+	// 后跳过该文件 → 数据丢失。
+	var aj struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &aj) == nil && aj.Code != 0 && aj.Code != 200 {
+		log.Printf("[openlist] upload 业务失败 code=%d msg=%s path=%s", aj.Code, aj.Message, full)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": aj.Message, "code": aj.Code, "path": full})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": full})
 }
 
@@ -409,6 +422,25 @@ func strField(raw map[string]any, key, def string) string {
 		}
 	}
 	return def
+}
+
+// normalizeEndpoint 补全地址协议前缀：用户漏写 http(s):// 时自动补全。
+// 与 App 端 normalizeUrl 规则一致：cloudflare 域名补 https，其余补 http。
+func normalizeEndpoint(raw string) string {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return ""
+	}
+	u = strings.TrimRight(u, "/")
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return u
+	}
+	scheme := "http://"
+	if strings.Contains(lower, "trycloudflare") || strings.Contains(lower, "workers.dev") || strings.Contains(lower, "cloudflare") {
+		scheme = "https://"
+	}
+	return scheme + u
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

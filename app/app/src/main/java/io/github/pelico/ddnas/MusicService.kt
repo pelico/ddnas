@@ -51,6 +51,44 @@ class MusicService : Service() {
     private var host = ""
     private var cookie = ""
 
+    // 连续播放错误计数：防 onPlayerError→nextTrack 死循环导致 ANR/闪退。
+    // cookie 过期时所有 track 都 401，REPEAT_MODE_ALL 会无限循环跳下一首，
+    // 每次错误在主线程同步触发 onPlayerError+notifyState，过载→系统杀进程。
+    // 连续超 MAX_CONSECUTIVE_ERRORS 次后停止自动跳转，只通知 UI。
+    private var consecutiveErrors = 0
+    private val MAX_CONSECUTIVE_ERRORS = 3
+
+    // 播放进度定时推送：等价于 Web 端 Audio.timeupdate 事件
+    // 节能退避：UI 可见时 1s 推（进度条流畅）；App 切后台时逐级退避到 5s→10s→30s，
+    // 后台仍保留推送（非完全停）以便切歌时 UI 能在 ≤30s 内同步，且不依赖前台。
+    // 播放连续性靠 WakeLock+WifiLock+ExoPlayer 缓冲，与进度推送频率无关，退避零影响。
+    private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var uiVisible = true  // 由 MainActivity onStart/onStop 通过桥设置
+    private var bgBackoffIdx = 0  // 后台退避阶梯索引
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            if (player?.isPlaying == true) {
+                notifyState()
+                // 后台逐级退避 5s→10s→30s（封顶 30s）；前台恢复 1s
+                val delay = if (uiVisible) {
+                    bgBackoffIdx = 0
+                    1000L
+                } else {
+                    val steps = longArrayOf(5000, 10000, 30000)
+                    val d = steps[minOf(bgBackoffIdx, steps.size - 1)]
+                    bgBackoffIdx = minOf(bgBackoffIdx + 1, steps.size - 1)
+                    d
+                }
+                progressHandler.postDelayed(this, delay)
+            }
+        }
+    }
+
+    // 睡眠定时器：到点暂停播放（不 stop，保留播放位置，用户醒了可继续）。
+    // 用同一个 progressHandler（主线程 Looper），与进度推送共用线程，无需额外 Handler。
+    private var sleepRunnable: Runnable? = null
+    private var sleepEndTime: Long = 0  // 0=未设定；>0=到点时间戳（System.currentTimeMillis）
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -71,6 +109,19 @@ class MusicService : Service() {
 
     // ---------- 公共控制（由 MainActivity JS 桥调用） ----------
 
+    /** 由 MainActivity onStart/onStop 调用：标记 UI 可见性，驱动进度推送退避节能 */
+    fun setUiVisible(visible: Boolean) {
+        uiVisible = visible
+        if (visible) {
+            bgBackoffIdx = 0
+            // 回前台若正在播放且进度推送已停（如暂停过），立即补推一次
+            if (player?.isPlaying == true) {
+                progressHandler.removeCallbacks(progressRunnable)
+                progressHandler.post(progressRunnable)
+            }
+        }
+    }
+
     fun play(index: Int, tracks: List<Track>, host: String, cookie: String) {
         this.playlist = tracks
         this.currentIndex = index
@@ -89,11 +140,15 @@ class MusicService : Service() {
         notifyState()
     }
 
-    fun playAt(index: Int) {
+    fun playAt(index: Int, cookie: String = "") {
         if (index !in playlist.indices) return
+        // 刷新 cookie：App 后台一段时间后 NAS 会话可能过期，旧 cookie 401 导致加载失败
+        if (cookie.isNotEmpty()) refreshCookie(cookie)
         currentIndex = index
         player?.seekTo(index, 0)
         player?.playWhenReady = true
+        // 重置连续错误计数：用户主动切歌视为新一轮尝试
+        consecutiveErrors = 0
         updateNotification(playlist[index].name)
         notifyState()
     }
@@ -125,7 +180,37 @@ class MusicService : Service() {
         if (dur > 0) p.seekTo((dur * percent / 100).toLong())
     }
 
+    /**
+     * 睡眠定时器：[minutes] 分钟后暂停播放。
+     * - 暂停而非停止：保留播放位置，用户醒了可点播放继续
+     * - Service 持有 WakeLock，即使屏幕熄灭/Doze 到点也一定执行
+     * - 设定后通过 notifyState() 通知 UI 显示倒计时
+     */
+    fun setSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        if (minutes <= 0) return
+        val r = Runnable {
+            pausePlayer()
+            sleepRunnable = null
+            sleepEndTime = 0
+            notifyState()
+        }
+        sleepRunnable = r
+        sleepEndTime = System.currentTimeMillis() + minutes * 60_000L
+        progressHandler.postDelayed(r, minutes * 60_000L)
+        notifyState()
+    }
+
+    fun cancelSleepTimer() {
+        sleepRunnable?.let { progressHandler.removeCallbacks(it) }
+        sleepRunnable = null
+        sleepEndTime = 0
+        notifyState()
+    }
+
     fun stopMusic() {
+        progressHandler.removeCallbacks(progressRunnable)
+        cancelSleepTimer()
         player?.stop()
         releaseLocks()
         abandonAudioFocus()
@@ -140,14 +225,15 @@ class MusicService : Service() {
         val pos = p?.currentPosition ?: 0
         val dur = p?.duration ?: 0
         val idx = p?.currentMediaItemIndex ?: currentIndex
-        return """{"playing":$playing,"index":$idx,"position":$pos,"duration":$dur}"""
+        val sleepMs = if (sleepEndTime > 0) (sleepEndTime - System.currentTimeMillis()).coerceAtLeast(0) else 0
+        return """{"playing":$playing,"index":$idx,"position":$pos,"duration":$dur,"sleepMs":$sleepMs}"""
     }
 
     // ---------- 内部 ----------
 
     private fun initPlayerIfNeeded() {
         if (player != null) return
-        val client = buildAuthedClient(host, cookie)
+        val client = buildAuthedClient()
         val factory: DataSource.Factory = OkHttpDataSource.Factory(client)
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(factory)
         player = ExoPlayer.Builder(this)
@@ -159,6 +245,12 @@ class MusicService : Service() {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         notifyState()
                         updateNotification(playlist.getOrNull(p.currentMediaItemIndex)?.name ?: "")
+                        // 播放中启动定时进度推送，暂停/停止时取消
+                        progressHandler.removeCallbacks(progressRunnable)
+                        if (isPlaying) {
+                            consecutiveErrors = 0  // 成功播放，重置错误计数
+                            progressHandler.postDelayed(progressRunnable, 1000)
+                        }
                     }
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         currentIndex = p.currentMediaItemIndex
@@ -166,29 +258,48 @@ class MusicService : Service() {
                         updateNotification(playlist.getOrNull(currentIndex)?.name ?: "")
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                        Log.e(TAG, "player error", error)
-                        // 出错自动跳下一首（避免卡死）
-                        nextTrack()
+                        Log.e(TAG, "player error (consecutive=${consecutiveErrors})", error)
+                        consecutiveErrors++
+                        if (consecutiveErrors > MAX_CONSECUTIVE_ERRORS) {
+                            // 连续错误超限：cookie 过期/网络断开导致所有 track 都失败，
+                            // 不再自动跳下一首（避免死循环 ANR），停止播放并通知 UI
+                            Log.w(TAG, "max consecutive errors reached, stopping auto-retry")
+                            consecutiveErrors = 0
+                            player?.playWhenReady = false
+                            notifyState()
+                        } else {
+                            // 单次错误（偶发网络抖动）：跳下一首重试
+                            nextTrack()
+                        }
                     }
                 })
             }
         initMediaSession()
     }
 
-    private fun buildAuthedClient(host: String, cookie: String): OkHttpClient {
+    private fun buildAuthedClient(): OkHttpClient {
         val base = (application as DdnasApplication).okHttpClient
+        // 拦截器读 Service 的可变 cookie/host 字段（非闭包捕获），
+        // 这样 playAt/refreshCookie 更新 cookie 后，下次请求自动用新值，
+        // 不需要重建 ExoPlayer（DataSourceFactory 绑定在 player 上无法热替换）。
         return base.newBuilder()
             .addInterceptor { chain ->
                 val req = chain.request()
                 val target = req.url.host
-                val originHost = Uri.parse(host)?.host ?: host
-                if (target == originHost && cookie.isNotEmpty()) {
-                    chain.proceed(req.newBuilder().header("Cookie", cookie).build())
+                val originHost = Uri.parse(this@MusicService.host)?.host ?: this@MusicService.host
+                val ck = this@MusicService.cookie
+                if (target == originHost && ck.isNotEmpty()) {
+                    chain.proceed(req.newBuilder().header("Cookie", ck).build())
                 } else {
                     chain.proceed(req)
                 }
             }
             .build()
+    }
+
+    /** 刷新会话 cookie（由 playAt 在切换曲目时从 JS 桥传入，防止后台过期） */
+    fun refreshCookie(cookie: String) {
+        if (cookie.isNotEmpty()) this.cookie = cookie
     }
 
     private fun initMediaSession() {
@@ -299,12 +410,23 @@ class MusicService : Service() {
         return PendingIntent.getService(this, action.hashCode(), intent, flags)
     }
 
+    // stateCallback 防抖：错误循环时 onPlayerError 会高频调 notifyState→evaluateJavascript，
+    // 连续推送淹没 WebView 主线程。合并 150ms 内的多次通知为一次，保 UI 不卡。
+    private val notifyRunnable = Runnable {
+        val cb = stateCallback ?: return@Runnable
+        cb.invoke(getStateJson())
+    }
     private fun notifyState() {
-        stateCallback?.invoke(getStateJson())
+        progressHandler.removeCallbacks(notifyRunnable)
+        progressHandler.post(notifyRunnable)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        progressHandler.removeCallbacks(progressRunnable)
+        progressHandler.removeCallbacks(notifyRunnable)
+        sleepRunnable?.let { progressHandler.removeCallbacks(it) }
+        sleepRunnable = null
         player?.release()
         player = null
         mediaSession?.release()

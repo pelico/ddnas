@@ -37,6 +37,13 @@ class BackupWorker(
         // 没选目录或没开自动备份 → 跳过
         if (cfg.treeUri.isEmpty() || !cfg.autoBackup) return Result.success()
 
+        // 并发互斥：手动备份(Service)正在跑时，Worker 跳过本次，等下个周期。
+        // 避免两个备份同时上传同一目录 → 同一文件传两次 / manifest 写入竞争。
+        if (BackupService.isRunning()) {
+            android.util.Log.i("DDNAS-Worker", "手动备份进行中，跳过本次自动备份")
+            return Result.success()
+        }
+
         // 找活跃服务器（servers/activeIndex 是 Flow，doWork 是 suspend 可直接 .first()）
         val serverStore = ServerStore(ctx)
         val servers = serverStore.servers.first()
@@ -46,21 +53,36 @@ class BackupWorker(
         val cookie = CookieManager.getInstance().getCookie(active.url) ?: ""
         val origin = active.url.trimEnd('/')
 
-        // 直接调 BackupService 的上传逻辑（不经过 Service 组件）
+        // 直接用 BackupEngine 执行上传（不经过 Service 组件，避免 new Service 导致
+        // Context 未挂载而 NPE）。applicationContext 是合法 Context。
+        val app = applicationContext as DdnasApplication
+        val engine = BackupEngine(applicationContext, app.okHttpClient)
+        BackupService.setRunning(true)
+        BackupService.setCancelled(false)
         return try {
-            val service = BackupService()
-            service.runBackupForWorker(
-                ctx,
+            val result = engine.runBackup(
                 Uri.parse(cfg.treeUri),
                 origin,
                 cookie,
-                cfg.remoteBase
+                cfg.remoteBase,
+                reportHistory = true
             )
-            store.setLastBackupTime(System.currentTimeMillis())
-            Result.success()
+            when (result) {
+                // 仅成功（含"无需备份"）才写入上次备份时间，避免失败时刷新时间戳误导用户
+                is BackupEngine.Result.Success -> {
+                    store.setLastBackupTime(System.currentTimeMillis())
+                    Result.success()
+                }
+                is BackupEngine.Result.Cancelled -> Result.success()
+                is BackupEngine.Result.Failed -> Result.retry()
+            }
         } catch (e: Exception) {
-            // 失败时 WorkManager 按 backoff 自动重试
+            // 未捕获异常：WorkManager 按 backoff 自动重试
+            android.util.Log.w("DDNAS-Worker", "backup worker exception", e)
             Result.retry()
+        } finally {
+            BackupService.setRunning(false)
+            BackupService.setCancelled(false)
         }
     }
 

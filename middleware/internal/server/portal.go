@@ -22,6 +22,15 @@ const portalSrc = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#f3f5fa">
 <title>DDNAS</title>
+<script>
+// 主题早加载：在 <style> 渲染前设 data-theme，避免深色 FOUC（白屏闪烁）
+// 值：auto=跟随系统 / light / dark，存 localStorage，默认 light（强制浅色开屏）
+try{
+  var t=localStorage.getItem("ddnas_theme")||"light";
+  if(t!=="auto"&&t!=="light"&&t!=="dark")t="light";
+  document.documentElement.setAttribute("data-theme",t);
+}catch(e){document.documentElement.setAttribute("data-theme","light");}
+</script>
 <style>
 :root{
   --bg:#f3f5fa;
@@ -37,8 +46,13 @@ const portalSrc = `<!doctype html>
   --surface2:#f6f8fc;
   --chip:#eef2fa;
 }
+/* 深色变量：手动开关 data-theme="dark" 或 跟随系统(data-theme="auto" 且系统深色) */
+[data-theme="dark"]{
+  --bg:#0e1018;--card:#171a25;--fg:#edf0f6;--muted:#8e95a7;--muted2:#5b6375;
+  --bd:#252a39;--surface2:#12151f;--chip:#1a2030;
+}
 @media (prefers-color-scheme: dark){
-  :root{
+  :root[data-theme="auto"]{
     --bg:#0e1018;--card:#171a25;--fg:#edf0f6;--muted:#8e95a7;--muted2:#5b6375;
     --bd:#252a39;--surface2:#12151f;--chip:#1a2030;
   }
@@ -75,8 +89,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   color:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;
 }
 @media (prefers-color-scheme: dark){
-  .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
+  :root[data-theme="auto"] .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
 }
+[data-theme="dark"] .nas-card{background:linear-gradient(135deg,#285dd1 0%,#4075e0 100%)}
 .nas-card::after{
   content:"";position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08);
 }
@@ -125,22 +140,28 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .c11{background:linear-gradient(135deg,#43c5a2,#25a082)}
 .c12{background:linear-gradient(135deg,#a0a6b3,#7c8392)}
 
-/* ===== 监控 4 卡（2×2）：半环 + 指标 ===== */
-/* 监控卡：纵向堆叠的横向长方块，每行一项，紧凑 */
-.monitor{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
-.m-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 14px}
-.m-card .m-hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.m-card .m-title{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600}
-.m-card .m-title .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
-.m-card .m-title.err .dot{background:var(--warn)}
-.m-card .m-right{font-size:14px;font-weight:700}
-.m-card .m-bar{height:5px;background:var(--surface2);border-radius:999px;overflow:hidden;margin-top:8px}
+/* ===== 监控卡：2×2 网格紧凑布局（参考 fnOS/极空间手机端） ===== */
+/* 4 卡统一结构：图标+标题+主数值(右上)+可选横条+次指标，无环形进度 */
+.monitor{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.m-card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.m-card .m-hd{display:flex;align-items:center;gap:8px}
+.m-card .m-ico{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;background:var(--surface2)}
+.m-card .m-title{flex:1;min-width:0;color:var(--muted);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-card .m-right{font-size:15px;font-weight:700;color:var(--fg);line-height:1;flex-shrink:0}
+.m-card .m-sub{font-size:10px;color:var(--muted2);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-card .m-vals{display:flex;gap:6px;font-size:10px;color:var(--muted);flex-wrap:wrap}
+.m-card .m-vals b{color:var(--fg);font-weight:600}
+/* 进度条：细线横条，仅 CPU/内存有 */
+.m-card .m-bar{height:4px;background:var(--surface2);border-radius:999px;overflow:hidden}
 .m-card .m-bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .5s}
 .m-card .m-bar.ok>i{background:var(--ok)}
 .m-card .m-bar.warn>i{background:var(--warn)}
 .m-card .m-bar.err>i{background:var(--err)}
-.m-card .m-vals{display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
-.m-card .m-vals b{color:var(--fg);font-weight:600}
+/* 网络卡：上下行并排 */
+.m-card.net .m-rates{display:flex;gap:10px}
+.m-card.net .m-rate{display:flex;flex-direction:column;gap:0}
+.m-card.net .m-rate .lbl{font-size:9px;color:var(--muted2)}
+.m-card.net .m-rate .val{font-size:12px;font-weight:700;color:var(--fg)}
 
 /* 错误 / 未启用提示卡 */
 .tip-card{
@@ -191,8 +212,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   background:linear-gradient(135deg,#3478f6,#5a93ff);color:#fff;border-radius:18px;padding:16px;
 }
 @media (prefers-color-scheme: dark){
-  .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
+  :root[data-theme="auto"] .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
 }
+[data-theme="dark"] .me-head{background:linear-gradient(135deg,#285dd1,#4075e0)}
 .me-head .av{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.22);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:20px}
 .me-head .t{font-size:16px;font-weight:600}
 .me-head .s{font-size:12px;opacity:.85;margin-top:2px}
@@ -285,12 +307,19 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-hist-failed .fl-list{white-space:pre-wrap;word-break:break-all;line-height:1.5;max-height:120px;overflow:auto}
 
 /* 远程目录浏览弹层 */
-.bk-browse{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain;-webkit-transform:translateZ(0);transform:translateZ(0)}
-.bk-browse-card{background:var(--card,#fff);margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;height:80vh;max-height:80vh;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+/* inset:0 在旧 WebView 可能无效，用 top/left/right/bottom:0 替代；
+   transform:translateZ(0) 会创建新层叠上下文，部分 WebView 下
+   position:fixed 子元素被降级为 absolute，移除避免该问题。
+   卡片高度不用 vh：App WebView 下 vh 可能按整窗口/文档算，与 position:fixed
+   的实际可视矩形不一致，导致卡片高出可视区，overflow:hidden 把"选择此目录"
+   按钮裁到屏外。改用相对 fixed 遮罩的百分比 + max-height 兜底；列表 min-height:0
+   可收缩，确保页脚按钮始终在可视区内。 */
+.bk-browse{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;overscroll-behavior:contain}
+.bk-browse-card{background:var(--card,#fff) !important;margin:16px;border:1px solid var(--bd,rgba(0,0,0,.12));border-radius:14px;height:80%;max-height:calc(100% - 32px);min-height:160px;width:calc(100% - 32px);max-width:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
 .bk-browse-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));flex-shrink:0}
 .bk-browse-title{font-size:14px;font-weight:600;flex:1}
 .bk-browse-path{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--bd,rgba(0,0,0,.08));word-break:break-all;flex-shrink:0}
-.bk-browse-list{flex:1;min-height:200px;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
+.bk-browse-list{flex:1;min-height:0;overflow:auto;padding:4px 0;-webkit-overflow-scrolling:touch}
 .bk-browse-item{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
 .bk-browse-item:active{background:var(--surface2)}
 .bk-browse-item .ic{font-size:16px;opacity:.8}
@@ -312,7 +341,10 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .music-player .m-btn.play{background:var(--accent);color:#fff}
 .music-player .m-btn:active{opacity:.7}
 .music-player .m-close{margin-left:4px;font-size:16px;color:var(--muted);cursor:pointer;background:none;border:none;padding:4px}
-.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:29;background:var(--card);border-top:1px solid var(--bd);max-height:40vh;overflow:auto;padding:6px 0;display:none}
+/* App WebView 里 vh 单位不可靠（与 position:fixed 实际可视矩形不一致，
+   同 .bk-browse-card 的 height:80vh 问题），导致 max-height:40vh 把列表压扁看不见。
+   改用固定 max-height；min-height 保证至少能看到一行 */
+.music-list{position:fixed;left:0;right:0;bottom:110px;z-index:40;background:var(--card);border-top:1px solid var(--bd);max-height:240px;min-height:80px;overflow:auto;padding:6px 0;display:none;box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .music-list.show{display:block}
 .music-list .mi{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:13px;cursor:pointer}
 .music-list .mi.cur{background:var(--surface2);color:var(--accent);font-weight:600}
@@ -324,7 +356,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
   background:var(--card);border-top:1px solid var(--bd);
-  display:grid;grid-template-columns:repeat(3,1fr);
+  display:grid;grid-template-columns:repeat(4,1fr);
   padding-bottom:env(safe-area-inset-bottom);
 }
 .tabbar button{
@@ -375,6 +407,30 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .toast.on{opacity:1}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted2);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== 主题分段开关（我的页） ===== */
+.theme-seg{display:flex;gap:0;background:var(--surface2);border:1px solid var(--bd);border-radius:10px;padding:2px}
+.theme-seg button{flex:1;padding:8px 0;font-size:13px;border-radius:8px;color:var(--muted);background:transparent}
+.theme-seg button.on{background:var(--card);color:var(--accent);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+/* ===== 睡眠定时选择弹窗（替代 prompt 文本输入） ===== */
+.sleep-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
+.sleep-card{background:var(--card);border-radius:16px;width:calc(100% - 48px);max-width:320px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+.sleep-head{padding:16px;text-align:center;font-size:15px;font-weight:600;border-bottom:1px solid var(--bd)}
+.sleep-opts{padding:6px 0}
+.sleep-opt{display:block;width:100%;padding:14px 0;text-align:center;font-size:15px;border:none;background:none;color:var(--fg);border-bottom:1px solid var(--bd)}
+.sleep-opt:active{background:var(--surface2)}
+.sleep-opt:last-child{border-bottom:none}
+.sleep-opt.cancel{color:var(--muted);font-size:14px}
+
+/* ===== 播放页列表项 ===== */
+.mp-item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.mp-item:active{opacity:.8}
+.mp-item .mp-ic{font-size:18px;opacity:.8}
+.mp-item .mp-nm{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-item .mp-sub{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-item .mp-del{font-size:18px;color:var(--err);background:none;border:none;padding:4px 8px;cursor:pointer}
+.mp-item .mp-del:active{opacity:.6}
 </style>
 </head>
 <body>
@@ -423,6 +479,9 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     </div>
     <div class="crumb" id="crumb"></div>
   </div>
+  <div id="dir-actions" style="padding:6px 14px 2px;display:flex;gap:8px;flex-wrap:wrap">
+    <button id="add-dir-audio" class="dl-act" style="display:none" onclick="addCurDirAudios()">＋ 把此目录音频加入播放列表</button>
+  </div>
   <div id="files-body">
     <div class="loading"><span class="spin"></span>加载中…</div>
   </div>
@@ -436,6 +495,18 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
       <div>
         <div class="t">admin</div>
         <div class="s" id="me-host">—</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sitem">
+        <span class="ic">🌓</span>
+        <div class="lbl">主题模式<div class="desc">跟随系统或手动切换深/浅色</div></div>
+        <div class="theme-seg" id="theme-seg" style="flex:0 0 auto">
+          <button data-theme-val="auto">自动</button>
+          <button data-theme-val="light">浅色</button>
+          <button data-theme-val="dark">深色</button>
+        </div>
       </div>
     </div>
 
@@ -528,7 +599,7 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   <div class="dl-bar">
     <button class="back" onclick="setTab('home')" title="返回首页">←</button>
     <div class="dl-title">下载任务</div>
-    <button class="dl-refresh" onclick="loadDownloadTasks()" title="刷新">↻</button>
+    <button class="dl-refresh" onclick="refreshDownloadNow()" title="刷新">↻</button>
   </div>
   <div class="dl-page">
     <!-- 提交表单：url 必填，DDM3U8 会从文本里正则识别多个 m3u8 链接 -->
@@ -545,10 +616,35 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
   </div>
 </section>
 
+<!-- ========== 播放页：独立 tab，从云盘添加音频、清空列表、播放控制 ========== -->
+<section id="view-music" class="hidden">
+  <div class="dl-bar">
+    <button class="back" onclick="setTab('home')" title="返回首页">←</button>
+    <div class="dl-title">播放列表</div>
+    <button class="dl-refresh" onclick="renderMusicPageList()" title="刷新">↻</button>
+  </div>
+  <div class="dl-page">
+    <div class="dl-submit">
+      <div style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted);margin-bottom:6px">
+        <span>共 <b id="mp-count">0</b> 首</span>
+        <span style="flex:1"></span>
+        <button class="dl-go" style="padding:6px 12px;font-size:12px" onclick="setTab('files')">从云盘添加</button>
+        <button class="dl-go" style="padding:6px 12px;font-size:12px;background:var(--surface2);color:var(--fg)" onclick="clearMusicPageList()">清空</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.5">
+        在「文件」中点击音频文件可加入此列表（持久保存，重启不丢）。
+        已加入的歌曲在此页面集中播放/移除。
+      </div>
+    </div>
+    <div class="dl-list" id="mp-list"><div class="dl-empty">暂无歌曲，从「文件」添加</div></div>
+  </div>
+</section>
+
 <!-- ========== 底部 Tab ========== -->
 <nav class="tabbar">
   <button id="tab-home" class="on" onclick="setTab('home')"><span class="ic">🏠</span><span class="lb">首页</span></button>
   <button id="tab-files" onclick="setTab('files')"><span class="ic">🗂</span><span class="lb">文件</span></button>
+  <button id="tab-music" onclick="setTab('music')"><span class="ic">🎵</span><span class="lb">播放</span></button>
   <button id="tab-me" onclick="setTab('me')"><span class="ic">👤</span><span class="lb">我的</span></button>
 </nav>
 
@@ -559,17 +655,35 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <div class="m-meta" id="m-meta">00:00 / 00:00</div>
   </div>
   <div class="m-bar">
-    <input type="range" id="m-seek" min="0" max="100" value="0" step="1" oninput="musicSeek(this.value)">
+    <input type="range" id="m-seek" min="0" max="100" value="0" step="1"
+      onmousedown="musicSeeking=true" ontouchstart="musicSeeking=true"
+      oninput="musicSeek(+this.value)"
+      onchange="musicSeeking=false" onmouseup="musicSeeking=false" ontouchend="musicSeeking=false">
   </div>
   <div class="m-ctrls">
     <button class="m-btn" onclick="musicPrev()" title="上一首">⏮</button>
     <button class="m-btn play" id="m-playbtn" onclick="musicToggle()" title="播放/暂停">▶</button>
     <button class="m-btn" onclick="musicNext()" title="下一首">⏭</button>
     <button class="m-btn" onclick="musicToggleList()" title="播放列表">≡</button>
+    <button class="m-btn" id="m-sleep" onclick="musicSleepMenu()" title="睡眠定时">🌙</button>
   </div>
   <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
 </div>
 <div class="music-list" id="music-list"></div>
+
+<!-- 睡眠定时选择弹窗（点击式，替代 prompt） -->
+<div class="sleep-modal" id="sleep-modal" style="display:none" onclick="closeSleepMenu()">
+  <div class="sleep-card" onclick="event.stopPropagation()">
+    <div class="sleep-head">🌙 睡眠定时</div>
+    <div class="sleep-opts">
+      <button class="sleep-opt" onclick="pickSleep(15)">15 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(30)">30 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(45)">45 分钟</button>
+      <button class="sleep-opt" onclick="pickSleep(60)">60 分钟</button>
+      <button class="sleep-opt cancel" onclick="pickSleep(0)">取消定时</button>
+    </div>
+  </div>
+</div>
 
 <div id="toast" class="toast"></div>
 
@@ -590,6 +704,34 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 </div>
 
 <script>
+/* ========= 主题手动开关：auto/light/dark，localStorage 持久化 ========= */
+// 早加载脚本已把 data-theme 设到 <html>，这里只负责 UI 同步 + 切换
+function setTheme(v){
+  if(v!=="auto"&&v!=="light"&&v!=="dark")v="light";
+  document.documentElement.setAttribute("data-theme",v);
+  try{localStorage.setItem("ddnas_theme",v);}catch(e){}
+  // 同步分段按钮高亮
+  document.querySelectorAll("#theme-seg button").forEach(b=>{
+    b.classList.toggle("on",b.dataset.themeVal===v);
+  });
+  // 同步 meta theme-color（影响浏览器地址栏/状态栏配色）
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta){
+    const dark=v==="dark"||(v==="auto"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);
+    meta.content=dark?"#0e1018":"#f3f5fa";
+  }
+}
+function initThemeSeg(){
+  const seg=document.getElementById("theme-seg");
+  if(!seg)return;
+  let cur="light";
+  try{cur=localStorage.getItem("ddnas_theme")||"light";}catch(e){}
+  setTheme(cur);
+  seg.querySelectorAll("button").forEach(b=>{
+    b.addEventListener("click",function(){setTheme(b.dataset.themeVal);});
+  });
+}
+
 /* ========= 全局 401 拦截：session 失效自动跳登录页 ========= */
 // 容器重装 / 密码变更后旧 session 失效，/portal/api/* 返回 401。
 // 这里 monkey-patch fetch，捕获 401 后跳转 /admin/login，避免页面停在 401 JSON 上。
@@ -611,7 +753,24 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 /* ========= 工具 ========= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function escJS(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
-function fmtBytes(v){v=+v||0;const u=["B","KB","MB","GB","TB","PB"];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v>=100?0:1)+" "+u[i];}
+// fmtBytes 字节单位格式化。注意三处边界：
+// 1) NaN/undefined/null/字符串 → +v||0 归零，显示 "0.0 B"
+// 2) Infinity（counter 回绕/聚合溢出/解析异常）→ 不进入 while 循环会停在 PB 显示 "Infinity PB"，
+//    用户看到"一会 MB 一会 PB"就是这个。Number.isFinite 兜底显示 "—"。
+// 3) 负数（counter 回绕做差为负被某层透传）→ 不会进 while，显示 "-xxx B"，也归零。
+function fmtBytes(v){
+  v=+v;
+  // 非有限数（NaN/Infinity/-Infinity）→ 无法量化，显示占位符避免误导
+  if(!Number.isFinite(v))return "—";
+  // 脏 counter（>1e18，如 eth0 tx uint64 溢出值 1.84e19）→ 绝对值不可信，显示 "—"
+  // 但增量速率由后端 computeNetRate 计算，不受影响
+  if(v>1e18)return "—";
+  if(v<0)v=0;
+  const u=["B","KB","MB","GB","TB","PB"];
+  let i=0;
+  while(v>=1024&&i<u.length-1){v/=1024;i++;}
+  return v.toFixed(v>=100?0:1)+" "+u[i];
+}
 function pct(v){return Math.max(0,Math.min(100,+v||0)).toFixed(1)+"%";}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1800);}
 function joinPath(base,name){base=base||"";name=name||"";if(!base)return name;return base.replace(/\/+$/,"")+"/"+name.replace(/^\/+/,"");}
@@ -644,20 +803,23 @@ if(typeof ddnas==="undefined"){
 let curTab="home";
 function setTab(t){
   curTab=t;
-  // view 容器：含 download（非 tabbar 页，从首页宫格进入）
-  ["home","files","me","download"].forEach(k=>{
+  // view 容器：含 download/music（download 非 tabbar 页，从首页宫格进入）
+  ["home","files","me","download","music"].forEach(k=>{
     const el=document.getElementById("view-"+k);
     if(el)el.classList.toggle("hidden",k!==t);
   });
-  // tabbar 高亮：只有 home/files/me 三栏，download 不高亮任何 tab
-  ["home","files","me"].forEach(k=>{
+  // tabbar 高亮：home/files/music/me 四栏，download 不高亮任何 tab
+  ["home","files","music","me"].forEach(k=>{
     const el=document.getElementById("tab-"+k);
     if(el)el.classList.toggle("on",k===t);
   });
   if(t==="home"&&!homeLoaded)loadHome();
+  // 离开首页停监控轮询，避免切到其他 tab 仍空跑
+  if(t!=="home"&&pollTimer){clearTimeout(pollTimer);pollTimer=null;pollBgIdx=0;}
   if(t==="files"&&!filesLoadedEver)loadFiles("");
-  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;loadBackupConfig();loadBackupHistory();}
+  if(t==="me"){document.getElementById("me-host").textContent=window.location.host;document.getElementById("me-host2").textContent=window.location.host;initThemeSeg();loadBackupConfig();loadBackupHistory();}
   if(t==="download")loadDownloadTasks();
+  if(t==="music")renderMusicPageList();
   // 滚动回到顶部
   window.scrollTo({top:0,behavior:"instant"});
 }
@@ -690,18 +852,30 @@ function renderGrid(){
 let sys=null;        // 上次 /api/node/system 结果
 let homeLoaded=false;
 let pollTimer=null;
+// 首页监控轮询退避：前台 10s；后台逐级退避 30s→60s→120s（封顶 120s），
+// 避免后台空跑 fetch 耗电。回前台由 visibilitychange 立即刷一次并重置到 10s。
+const POLL_FG=10000, POLL_BG_STEPS=[30000,60000,120000];
+let pollBgIdx=0;  // 后台退避阶梯索引
 
-// 判断圆环配色
+// 判断进度条配色：>=90% 红(err)，>=70% 橙(warn)，否则绿(ok)
 function barClass(p){p=+p||0;if(p>=90)return"err";if(p>=70)return"warn";return"ok";}
-// 监控卡：横向长方块，标题+进度条+键值对，紧凑展示
-function mCardHTML(opts){
-  const p=Math.max(0,Math.min(100,+opts.percent||0));
+// 统一监控卡：图标+标题+主数值(右上)+可选横条进度+次指标行。
+// 4 卡结构完全一致，CPU/内存有 percent 渲染横条，网络/温度无横条。
+function mStatHTML(opts){
+  const p=opts.percent!=null?Math.max(0,Math.min(100,+opts.percent)):null;
   const vals=(opts.metrics||[]).map(function(m){return '<span>'+esc(m.k)+' <b>'+m.v+'</b></span>';}).join("");
-  const right=opts.right?'<span class="m-right">'+opts.right+'</span>':'';
-  const bar=opts.bar!==false?('<div class="m-bar '+barClass(p)+'"><i style="width:'+p.toFixed(0)+'%"></i></div>'):'';
-  return '<div class="m-card">'+
-    '<div class="m-hd"><div class="m-title '+(opts.err?'err':'')+'"><span class="dot"></span>'+esc(opts.title)+'</div>'+right+'</div>'+
+  const bar=p!=null?('<div class="m-bar '+barClass(p)+'"><i style="width:'+p.toFixed(0)+'%"></i></div>'):'';
+  return '<div class="m-card '+(opts.cls||'')+'">'+
+    '<div class="m-hd">'+
+      '<div class="m-ico">'+(opts.ico||'📊')+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="m-title">'+esc(opts.title)+'</div>'+
+        (opts.sub?'<div class="m-sub">'+esc(opts.sub)+'</div>':'')+
+      '</div>'+
+      '<div class="m-right">'+(opts.right||'—')+'</div>'+
+    '</div>'+
     bar+
+    (opts.rates?'<div class="m-rates">'+opts.rates+'</div>':'')+
     (vals?'<div class="m-vals">'+vals+'</div>':'')+
   '</div>';
 }
@@ -747,9 +921,46 @@ async function loadHome(){
     }
   };
   await doLoad(false);
-  if(pollTimer)clearInterval(pollTimer);
-  pollTimer=setInterval(function(){doLoad(false);},10000);
+  window.__doLoad=doLoad;  // 供 forceRefreshSystem / visibilitychange 重入
+  if(pollTimer)clearTimeout(pollTimer);
+  pollBgIdx=0;
+  pollTimer=setTimeout(function tick(){
+    doLoad(false).finally(()=>{
+      // 链式安排下一次；页面隐藏时逐级退避，避免后台空跑
+      if(document.hidden){
+        const delay=POLL_BG_STEPS[Math.min(pollBgIdx,POLL_BG_STEPS.length-1)];
+        pollBgIdx=Math.min(pollBgIdx+1,POLL_BG_STEPS.length-1);
+        pollTimer=setTimeout(tick,delay);
+      }else{
+        pollBgIdx=0;
+        pollTimer=setTimeout(tick,POLL_FG);
+      }
+    });
+  },POLL_FG);
 }
+// visibilitychange：回前台立即刷一次 + 重置退避到 10s；后台不动（下个 tick 自动退避）
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden && curTab==="home" && window.__doLoad){
+    if(pollTimer)clearTimeout(pollTimer);
+    pollBgIdx=0;
+    window.__doLoad(false).finally(()=>{
+      if(!document.hidden){
+        pollTimer=setTimeout(function tick(){
+          window.__doLoad(false).finally(()=>{
+            if(document.hidden){
+              const delay=POLL_BG_STEPS[Math.min(pollBgIdx,POLL_BG_STEPS.length-1)];
+              pollBgIdx=Math.min(pollBgIdx+1,POLL_BG_STEPS.length-1);
+              pollTimer=setTimeout(tick,delay);
+            }else{
+              pollBgIdx=0;
+              pollTimer=setTimeout(tick,POLL_FG);
+            }
+          });
+        },POLL_FG);
+      }
+    });
+  }
+});
 let lastStat={mode:"",text:"",ts:0,ms:0};
 /* 连接状态展示：ok=绿圈+延迟 / loading=黄圈+连接中 / err=红圈+检查网络。
    详细错误信息已在监控卡区域展示，d-stat 只保留简短状态，避免文字过长挤压布局。 */
@@ -1076,8 +1287,12 @@ window.__onBackupProgress=function(p){
     if(fillEl)fillEl.style.width="0%";
     if(curEl){curEl.textContent=p.message||"出错";curEl.className="bk-prog-cur err";}
   }
-  // 备份结束（done/error）后刷新历史列表，确保最新一条入库后立即可见
-  if(bkPhase==="done"||bkPhase==="error"){setTimeout(loadBackupHistory,800);}
+  // 备份结束（done/error）后刷新历史列表，确保最新一条入库后立即可见；
+  // 同时刷新"上次备份"时间（setLastBackupTime 在 Progress.Done 之后才写入，留 1s 余量）
+  if(bkPhase==="done"||bkPhase==="error"){
+    setTimeout(loadBackupHistory,800);
+    setTimeout(loadBackupConfig,1000);
+  }
 };
 
 /* ========= 下载任务管理（DDM3U8，通过能力路由 /portal/api/download/*） =========
@@ -1095,12 +1310,31 @@ function dlStatusBadge(s){
   if(s==="失败"||s==="已取消")return ["error",s==="已取消"?"取消":"失败"];
   return ["",s];
 }
+// 下载任务轮询：仿 DDM3U8 原项目 setTimeout 链式轮询。
+// 有活跃任务 2s 刷一次（看实时进度 log + 状态变更），无活跃 10s 刷一次。
+// 页面隐藏(document.hidden)或离开 download 页(listEl 不存在)自动停，
+// 避免后台空跑 / WebView 切走后继续请求。
+const DL_ACTIVE_INTERVAL=2000, DL_IDLE_INTERVAL=10000;
+const DL_ACTIVE_STATUSES=["排队中","下载中","合并中","等待FFmpeg","转换中"];
+let dlRefreshTimer=null, dlRefreshInFlight=false;
 function loadDownloadTasks(){
   const listEl=document.getElementById("dl-list");
   const activeEl=document.getElementById("dl-active");
   const maxEl=document.getElementById("dl-max");
-  if(!listEl)return; // 不在 download 页
-  listEl.innerHTML='<div class="dl-empty"><span class="spin"></span>加载中…</div>';
+  if(!listEl){ // 不在 download 页 → 停轮询
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+    return;
+  }
+  // 页面隐藏不空刷（visibilitychange 回到前台会触发 refreshNow）
+  if(document.hidden){
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+    return;
+  }
+  // 上一次还没回 → 跳过这次，等下一次 timer
+  if(dlRefreshInFlight)return;
+  if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  dlRefreshInFlight=true;
+  let nextDelay=DL_IDLE_INTERVAL;
   fetch("/portal/api/download/tasks").then(r=>{
     if(!r.ok)throw new Error("HTTP "+r.status+(r.status===404?"（下载适配器未启用）":""));
     return r.json();
@@ -1110,6 +1344,9 @@ function loadDownloadTasks(){
     // tasks 是对象 {id: task}，task_order 是 id 数组（按 created_at 倒序）
     const order=resp.task_order||[];
     const tasks=resp.tasks||{};
+    // 有活跃任务 → 缩短下一次轮询间隔，看实时进度
+    nextDelay=order.some(tid=>DL_ACTIVE_STATUSES.includes((tasks[tid]||{}).status||""))
+      ? DL_ACTIVE_INTERVAL : DL_IDLE_INTERVAL;
     if(!order.length){listEl.innerHTML='<div class="dl-empty">暂无下载任务</div>';return;}
     listEl.innerHTML=order.map(function(tid){
       const t=tasks[tid]||{};
@@ -1118,19 +1355,44 @@ function loadDownloadTasks(){
       const ct=fmtBackupTime(t.created_at?Date.parse(t.created_at):0);
       const log=t.log?('<div class="dl-task-log">'+esc(t.log)+'</div>'):'';
       // 操作按钮：按状态显示可用动作
+      // 取消 = 停止进行中的下载（cancel action），删除 = 移除已结束任务的记录（clear-selected）
       const st=t.status;
       let acts='<div class="dl-actions">';
       if(st==="下载中"||st==="合并中"||st==="转换中")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'pause\')">暂停</button>';
       if(st==="已暂停")acts+='<button class="dl-act" onclick="taskAction(\''+esc(tid)+'\',\'resume\')">恢复</button>';
-      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
-      if(st!=="下载中"&&st!=="合并中"&&st!=="转换中"&&st!=="排队中")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">删除</button>';
+      // 活跃任务 → 取消：停止下载（pause/resume 对已暂停也保留取消入口）
+      if(st==="下载中"||st==="合并中"||st==="转换中"||st==="已暂停"||st==="排队中"||st==="等待FFmpeg")acts+='<button class="dl-act danger" onclick="taskAction(\''+esc(tid)+'\',\'cancel\')">取消</button>';
+      // 已结束任务 → 删除：清除记录（与取消区分，不再误调 cancel）
+      if(st==="已完成"||st==="失败"||st==="已取消")acts+='<button class="dl-act danger" onclick="deleteTask(\''+esc(tid)+'\')">删除</button>';
       acts+='</div>';
       return '<div class="dl-task"><div class="dl-task-head"><span class="dl-task-name">'+name+'</span><span class="dl-badge '+bc+'">'+esc(bl)+'</span></div><div class="dl-task-meta"><span>'+ct+'</span></div>'+log+acts+'</div>';
     }).join("");
   }).catch(e=>{
     listEl.innerHTML='<div class="dl-empty">加载失败：'+esc(e.message)+'</div>';
+    // 失败时用短间隔重试，恢复后自动回到正常节奏
+    nextDelay=DL_ACTIVE_INTERVAL;
+  }).finally(()=>{
+    dlRefreshInFlight=false;
+    // 链式安排下一次刷新；离开页面/隐藏会在下次 loadDownloadTasks 入口断
+    if(listEl && !document.hidden){
+      dlRefreshTimer=setTimeout(loadDownloadTasks, nextDelay);
+    }
   });
 }
+// 手动"立即刷新"按钮：打断当前 timer，马上拉一次
+function refreshDownloadNow(){
+  if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  loadDownloadTasks();
+}
+// 页面可见性变化：回到前台立即刷一次，隐藏时停轮询
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden){
+    // 在 download 页才刷
+    if(document.getElementById("dl-list")) refreshDownloadNow();
+  }else{
+    if(dlRefreshTimer){clearTimeout(dlRefreshTimer);dlRefreshTimer=null;}
+  }
+});
 // 提交下载：构造 form-data，DDM3U8 /down 接口要求表单字段而非 JSON
 function submitDownload(){
   const urlEl=document.getElementById("dl-url");
@@ -1142,11 +1404,17 @@ function submitDownload(){
   const url=urlEl.value.trim();
   if(!url){toast("请粘贴 m3u8 链接");urlEl.focus();return;}
   if(goBtn){goBtn.disabled=true;goBtn.textContent="提交中…";}
+  // 路径安全化：name/sub_path 用于 DDM3U8 拼临时目录与最终文件路径，
+  // 含 / \ .. 空格开头等会让 mkdir 失败或越权，需清洗。
+  function safeName(s){return (s||"").trim().replace(/[\/\\]+/g,"_").replace(/^\.\.+/g,"").replace(/^\s+/,"").replace(/\s+$/g,"");}
+  function safePath(s){return (s||"").trim().replace(/^[\/\\]+/,"").replace(/[\/\\]+/g,"/").replace(/^\.\.+/g,"");}
+  const name=safeName(nameEl?nameEl.value:"")||"video";
+  const subPath=subEl?safePath(subEl.value):"";
   const fd=new FormData();
   fd.append("url",url);
-  fd.append("name",nameEl?nameEl.value.trim():"video");
+  fd.append("name",name);
   if(refEl&&refEl.value.trim())fd.append("referer",refEl.value.trim());
-  if(subEl&&subEl.value.trim())fd.append("sub_path",subEl.value.trim());
+  if(subPath)fd.append("sub_path",subPath);
   fetch("/portal/api/download/submit",{method:"POST",body:fd}).then(r=>{
     return r.json().then(j=>({ok:r.ok,j}));
   }).then(({ok,j})=>{
@@ -1177,6 +1445,19 @@ function taskAction(tid,action){
     if(r.ok){toast(tip+" 已执行",1000);setTimeout(loadDownloadTasks,400);}
     else{toast(tip+" 失败：HTTP "+r.status,2000);}
   }).catch(e=>toast(tip+" 失败："+e.message,2000));
+}
+// 删除已结束任务的记录：调 /download/clear-selected 传 {ids:[tid]} 清除指定任务。
+// 与"取消"区分——取消是停止进行中的下载（taskAction cancel），删除是移除已结束的记录。
+function deleteTask(tid){
+  if(!tid)return;
+  if(!confirm("删除这条任务记录？"))return;
+  fetch("/portal/api/download/clear-selected",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ids:[tid]})
+  }).then(r=>{
+    if(r.ok){toast("已删除",1000);setTimeout(loadDownloadTasks,400);}
+    else{toast("删除失败：HTTP "+r.status,2000);}
+  }).catch(e=>toast("删除失败："+e.message,2000));
 }
 
 /* ========= 原生系统返回/侧滑返回 转发处理（避免滑动就退桌面） =========
@@ -1212,25 +1493,9 @@ function browseRemoteDir(){
   const root=document.getElementById("bk-browse");
   const listEl=document.getElementById("bk-browse-list");
   if(!root||!listEl)return;
-  // 初始路径：取当前远程路径输入框的值，去掉首尾 "/"
-  const remoteEl=document.getElementById("bk-remote");
-  let init="";
-  if(remoteEl){init=remoteEl.value.trim().replace(/^\/+/,"").replace(/\/+$/,"");}
+  // 每次点"浏览"都从根目录开始，用户逐级进入子目录后点"选择此目录"确认
   root.style.display="flex";
-  // 诊断：WebView 内 card 实际渲染尺寸/位置，从 Logcat 看（tag DDNAS-Portal）
-  // 若 width/height=0 说明 flex 计算失败，card 被压扁
-  try{
-    setTimeout(()=>{
-      const card=document.querySelector(".bk-browse-card");
-      if(card){
-        const r=card.getBoundingClientRect();
-        const cs=getComputedStyle(card);
-        const log="browse-card rect: w="+Math.round(r.width)+" h="+Math.round(r.height)+" top="+Math.round(r.top)+" left="+Math.round(r.left)+" bg="+cs.background+" disp="+cs.display+" vis="+cs.visibility+" flex="+cs.flexDirection;
-        try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log(log);else console.log("[browse-diag] "+log);}catch(e){console.log("[browse-diag-err] "+log);}
-      }
-    },50);
-  }catch(e){}
-  browseLoad(init);
+  browseLoad("");
 }
 function closeBrowse(){
   const root=document.getElementById("bk-browse");
@@ -1243,12 +1508,16 @@ function browseLoad(p){
   if(!pathEl||!listEl)return;
   pathEl.textContent="/"+browseCur;
   listEl.innerHTML='<div class="bk-browse-empty">加载中…</div>';
-  // AbortController + 超时：避免 WebView 内 fetch 卡死（Cloudflare/网络问题时一直 pending），
-  // 超时后明确提示，便于用户排查（而不是永远"加载中…"）。
-  const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),15000);
+  // AbortController 在旧版 WebView（无 Google Play 的国产设备）可能不存在，
+  // 直接 new 会抛 ReferenceError 且无人捕获，导致函数卡死在"加载中…"。
+  // 降级：无 AbortController 时用普通 fetch（无超时），至少能正常加载。
+  let ctrl=null,timer=null;
+  try{ctrl=new AbortController();}catch(e){ctrl=null;}
+  if(ctrl)timer=setTimeout(()=>{try{ctrl.abort();}catch(_){}},15000);
   const url="/portal/api/files/list?path="+encodeURIComponent(browseCur);
-  fetch(url,{credentials:"same-origin",signal:ctrl.signal}).then(r=>{
+  const opts={credentials:"same-origin"};
+  if(ctrl)opts.signal=ctrl.signal;
+  fetch(url,opts).then(r=>{
     if(!r.ok){
       // 401：cookie 失效，提示用户回首页触发重新登录
       const hint=r.status===401?"（登录已失效，请下拉刷新或重新打开页面）":"";
@@ -1256,7 +1525,7 @@ function browseLoad(p){
     }
     return r.json();
   }).then(resp=>{
-    clearTimeout(timer);
+    if(timer)clearTimeout(timer);
     if(resp.error)throw new Error(resp.error);
     const items=(resp.items||[]).filter(it=>{
       // 兼容 is_dir 是 boolean 或 0/1 数字（AList 不同版本可能两种形式）
@@ -1277,9 +1546,9 @@ function browseLoad(p){
       el.addEventListener("click",()=>browseLoad(el.dataset.rel||""));
     });
   }).catch(e=>{
-    clearTimeout(timer);
+    if(timer)clearTimeout(timer);
     // AbortError 单独标识：网络未在 15s 内响应（典型 Cloudflare 卡死）
-    const msg=e&&e.name==="AbortError"?"加载超时（15s 内无响应，可能网络受限或代理拦截）":e.message;
+    const msg=(ctrl&&e&&e.name==="AbortError")?"加载超时（15s 内无响应，可能网络受限或代理拦截）":(e&&e.message||"加载失败");
     // 通过 ddnas 桥输出到 Logcat（App WebView 内可用）
     try{if(typeof ddnas!=="undefined"&&ddnas&&ddnas.log)ddnas.log("[browse] "+url+" -> "+msg);}catch(_){}
     listEl.innerHTML='<div class="bk-browse-empty">加载失败：'+esc(msg)+'<br><a href="/admin/adapter/openlist" style="color:var(--accent)">前往配置 -></a></div>';
@@ -1362,41 +1631,47 @@ function renderMonitor(s){
   const mem=s.memory||{};
   const net=(s.network||[])[0]||{};
 
+  // CPU：横条进度 + 主数值(%) + 负载/核心次指标
   const cpuPct=+cpu.usage_percent||0;
-  const cpuHtml=mCardHTML({title:"CPU",percent:cpuPct,
-    right:cpuPct.toFixed(1)+"%",
+  const cpuHtml=mStatHTML({
+    ico:"🖥",title:"CPU",percent:cpuPct,
+    right:cpuPct.toFixed(0)+"%",
+    sub:"负载 "+(cpu.load1||0).toFixed(2),
     metrics:[
-      {k:"负载",v:(+cpu.load1||0).toFixed(2)},
+      {k:"5m",v:(cpu.load5||0).toFixed(2)},
       {k:"核心",v:cpu.cores?cpu.cores+"核":"—"}
     ]
   });
+  // 内存：横条进度 + 主数值(%) + 可用容量
   const memPct=+mem.usage_percent||0;
-  const memHtml=mCardHTML({title:"内存",percent:memPct,
-    right:memPct.toFixed(1)+"%",
+  const memHtml=mStatHTML({
+    ico:"💾",title:"内存",percent:memPct,
+    right:memPct.toFixed(0)+"%",
+    sub:fmtBytes(+mem.used_bytes||0)+" / "+fmtBytes(+mem.total_bytes||0),
+    metrics:[{k:"可用",v:fmtBytes((+mem.total_bytes||0)-(+mem.used_bytes||0))}]
+  });
+  // 网络：上下行速率并排 + 累计次指标。无百分比，无横条
+  const netRates='<div class="m-rate"><span class="lbl">↓ 下行</span><span class="val">'+fmtBytes(+net.rx_rate||0)+'/s</span></div>'+
+                 '<div class="m-rate"><span class="lbl">↑ 上行</span><span class="val">'+fmtBytes(+net.tx_rate||0)+'/s</span></div>';
+  const netHtml=mStatHTML({
+    ico:"🌐",cls:"net",title:"网络",
+    right:fmtBytes((+net.rx_rate||0)+(+net.tx_rate||0))+"/s",
+    rates:netRates,
     metrics:[
-      {k:"已用",v:fmtBytes(+mem.used_bytes||0)},
-      {k:"总量",v:fmtBytes(+mem.total_bytes||0)}
+      {k:"累计↓",v:fmtBytes(+net.rx_bytes||0)},
+      {k:"累计↑",v:fmtBytes(+net.tx_bytes||0)}
     ]
   });
-  // 网络：后端基于两次采样做差计算 B/s 速率，首次请求为 0
-  const netDev=net.device==="__sum__"?"全部网卡":(net.device||"—");
-  const netHtml=mCardHTML({title:"网络",bar:false,
-    right:"↓"+fmtBytes(+net.rx_rate||0)+"/s ↑"+fmtBytes(+net.tx_rate||0)+"/s",
-    metrics:[
-      {k:"累计接收",v:fmtBytes(+net.rx_bytes||0)},
-      {k:"累计发送",v:fmtBytes(+net.tx_bytes||0)},
-      {k:"网卡",v:esc(netDev)}
-    ]
-  });
-  // 温度：取最高值作为核心温度展示（node_hwmon_temp_celsius）
-  let maxTemp=0,tempName="";
-  (s.temps||[]).forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;tempName=t.chip+"/"+t.name;}});
-  const tempHtml=mCardHTML({title:"温度",bar:false,
-    right:maxTemp>0?maxTemp.toFixed(1)+"°C":"无",
+  // 温度：主数值 + 传感器次指标。无百分比，无横条
+  let maxTemp=0;
+  (s.temps||[]).forEach(function(t){if(+t.value>maxTemp){maxTemp=+t.value;}});
+  const tempHtml=mStatHTML({
+    ico:"🌡",title:"温度",
+    right:maxTemp>0?maxTemp.toFixed(1)+"°":"—",
     metrics:maxTemp>0?[
-      {k:"传感器",v:esc(tempName)},
-      {k:"数量",v:(s.temps||[]).length+"个"}
-    ]:[{k:"提示",v:"node_exporter 未启用 hwmon collector"}]
+      {k:"最高",v:maxTemp.toFixed(1)+"°C"},
+      {k:"传感器",v:(s.temps||[]).length+"个"}
+    ]:[{k:"提示",v:"无 hwmon"}]
   });
   box.innerHTML=cpuHtml+memHtml+netHtml+tempHtml;
 }
@@ -1408,6 +1683,9 @@ let filesLoadedEver=false;
 function loadFiles(p){
   curFiles=p||"";filesLoadedEver=true;
   const body=document.getElementById("files-body");
+  // 加载新目录时先隐藏整目录加入按钮，避免旧目录残留
+  const addBtn0=document.getElementById("add-dir-audio");
+  if(addBtn0)addBtn0.style.display="none";
   const pathEl=document.getElementById("file-path");
   pathEl.textContent="/"+(curFiles||"");
   const upBtn=document.getElementById("up-btn");
@@ -1433,6 +1711,10 @@ function loadFiles(p){
       if(da!==db)return db-da;return String(a.name||"").localeCompare(String(b.name||""));
     });
     curItems=items;  // 存当前目录文件项，供音乐播放器生成同目录播放列表
+    // 此目录含音频时显示「整目录加入播放列表」按钮
+    const hasAudio=items.some(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
+    const addBtn=document.getElementById("add-dir-audio");
+    if(addBtn)addBtn.style.display=hasAudio?"":"none";
     if(!items.length){body.innerHTML='<div class="empty">空目录</div>';return;}
     body.innerHTML='<div class="flist">'+items.map(function(it){
       const name=esc(it.name||"");
@@ -1449,11 +1731,13 @@ function loadFiles(p){
       var kind=mediaExt(it.name||"");
       var icoClass=kind==="video"?"video":kind==="audio"?"audio":kind==="image"?"image":kind==="doc"?"doc":"";
       var icoChar=kind==="video"?"🎬":kind==="audio"?"🎵":kind==="image"?"🖼":kind==="doc"?"📄":"📦";
-      var btn=(kind==="video"||kind==="audio")
+      var btn=(kind==="video")
         ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button>'
-        :(kind==="image"
-          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
-          :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>');
+        :(kind==="audio"
+          ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="play">播放</button><button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="addmusic" title="加入播放列表" style="min-width:36px">＋</button>'
+          :(kind==="image"
+            ?'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="view">查看</button>'
+            :'<button class="fbtn" data-rel="'+esc(rel)+'" data-name="'+esc(it.name||"")+'" data-type="download">下载</button>'));
       return '<div class="fitem" data-type="file">'+
         '<div class="fic '+icoClass+'">'+icoChar+'</div><div class="fn"><div class="nm">'+name+'</div><div class="mt">'+esc(sub)+'</div></div>'+btn+'</div>';
     }).join("")+"</div>";
@@ -1470,6 +1754,11 @@ function loadFiles(p){
     body.querySelectorAll('button[data-type="play"]').forEach(b=>{
       b.addEventListener("click",e=>{
         e.stopPropagation();play(b.dataset.rel||"");
+      });
+    });
+    body.querySelectorAll('button[data-type="addmusic"]').forEach(b=>{
+      b.addEventListener("click",e=>{
+        e.stopPropagation();addMusicPageItem(b.dataset.rel||"",b.dataset.name||"");
       });
     });
     body.querySelectorAll('button[data-type="view"]').forEach(b=>{
@@ -1521,6 +1810,7 @@ function play(relPath){
 
 /* ========= 迷你音乐播放器 ========= */
 let musicPlaylist=[];     // [{name,url,rel}]
+let musicSeeking=false;   // 拖动进度条时为 true；期间禁止状态回调回写 m-seek.value，避免拖动被"弹回"
 let musicIndex=0;
 let musicAudio=null;      // 浏览器环境用 HTML5 audio
 let musicPlaying=false;
@@ -1613,7 +1903,7 @@ function musicSeek(percent){
 function updateMusicProgress(){
   if(!musicAudio||!musicAudio.duration)return;
   const cur=musicAudio.currentTime||0,dur=musicAudio.duration;
-  document.getElementById("m-seek").value=Math.round(cur/dur*100);
+  if(!musicSeeking) document.getElementById("m-seek").value=Math.round(cur/dur*100);
   document.getElementById("m-meta").textContent=fmtTime(cur)+" / "+fmtTime(dur);
 }
 function updateMusicBtn(){document.getElementById("m-playbtn").textContent=musicPlaying?"⏸":"▶";}
@@ -1625,13 +1915,154 @@ function renderMusicList(){
   ).join("");
 }
 function musicPlayAt(i){musicIndex=i;playCurrent();}
-function musicToggleList(){document.getElementById("music-list").classList.toggle("show");}
+function musicToggleList(){
+  const el=document.getElementById("music-list");
+  if(!el)return;
+  // 即将展开时先重新渲染列表，防止某次状态切换漏掉渲染导致列表为空
+  if(!el.classList.contains("show")) renderMusicList();
+  el.classList.toggle("show");
+}
 function musicClose(){
   if(typeof ddnas!=="undefined"&&typeof ddnas.musicControl==="function"){try{ddnas.musicControl("stop");}catch(e){}}
+  if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){try{ddnas.setSleepTimer(0);}catch(e){}}
   if(musicAudio){musicAudio.pause();musicAudio.src="";}
   musicPlaying=false;musicPlaylist=[];musicIndex=0;
+  musicSleepMs=0;updateSleepBtn();
   document.getElementById("music-player").style.display="none";
   document.getElementById("music-list").classList.remove("show");
+}
+
+/* ========= 持久化播放列表（Play 栏，localStorage 保存，重启不丢） ========= */
+// 数据格式与 musicPlaylist 一致：[{name, rel, url}]，rel 用于去重/路径展示
+const MP_KEY="ddnas_music_playlist";
+function getMusicPageList(){
+  try{return JSON.parse(localStorage.getItem(MP_KEY)||"[]")||[];}catch(e){return[];}
+}
+function saveMusicPageList(arr){
+  try{localStorage.setItem(MP_KEY,JSON.stringify(arr||[]));}catch(e){}
+}
+// 从文件页加入一首：rel 为相对路径，name 为文件名
+function addMusicPageItem(rel,name){
+  if(!rel)return false;
+  const list=getMusicPageList();
+  // 去重：同 rel 已存在则不重复添加
+  if(list.some(a=>a.rel===rel)){toast("已在播放列表中");return false;}
+  list.push({name:name||rel.split("/").pop()||"未知",rel:rel,url:streamUrl(rel)});
+  saveMusicPageList(list);
+  toast("已加入播放列表");
+  // 若当前正在播放页，刷新展示
+  if(curTab==="music")renderMusicPageList();
+  return true;
+}
+function removeMusicPageItem(i){
+  const list=getMusicPageList();
+  if(i<0||i>=list.length)return;
+  list.splice(i,1);
+  saveMusicPageList(list);
+  renderMusicPageList();
+}
+// 把当前目录所有音频加入播放列表（去重，跳过已存在）
+function addCurDirAudios(){
+  if(!curItems||!curItems.length){toast("当前目录为空");return;}
+  const audios=curItems.filter(it=>!it.is_dir&&it.type!=="folder"&&mediaExt(it.name)==="audio");
+  if(!audios.length){toast("此目录没有音频文件");return;}
+  const list=getMusicPageList();
+  let added=0,skipped=0;
+  audios.forEach(it=>{
+    const rel=joinPath(curFiles,it.name||"");
+    if(list.some(a=>a.rel===rel)){skipped++;return;}
+    list.push({name:it.name||"未知",rel:rel,url:streamUrl(rel)});
+    added++;
+  });
+  saveMusicPageList(list);
+  if(curTab==="music")renderMusicPageList();
+  toast("已加入 "+added+" 首"+(skipped>0?"，跳过已存在 "+skipped+" 首":""));
+}
+function clearMusicPageList(){
+  const list=getMusicPageList();
+  if(!list.length){toast("列表已为空");return;}
+  if(!confirm("确定清空播放列表？"))return;
+  saveMusicPageList([]);
+  renderMusicPageList();
+  toast("已清空播放列表");
+}
+function renderMusicPageList(){
+  const el=document.getElementById("mp-list");
+  const cnt=document.getElementById("mp-count");
+  if(!el)return;
+  const list=getMusicPageList();
+  if(cnt)cnt.textContent=list.length;
+  if(!list.length){el.innerHTML='<div class="dl-empty">暂无歌曲，从「文件」添加</div>';return;}
+  el.innerHTML=list.map(function(a,i){
+    return '<div class="mp-item" onclick="musicPagePlay('+i+')">'+
+      '<span class="mp-ic">🎵</span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="mp-nm">'+esc(a.name||"未知")+'</div>'+
+        '<div class="mp-sub">'+esc(a.rel||"")+'</div>'+
+      '</div>'+
+      '<button class="mp-del" onclick="event.stopPropagation();removeMusicPageItem('+i+')" title="移除">✕</button>'+
+    '</div>';
+  }).join("");
+}
+// 从持久化列表播放第 i 首：整列表交给 startMusic（与目录播放共用同一播放器）
+function musicPagePlay(i){
+  const list=getMusicPageList();
+  if(!list.length){toast("播放列表为空");return;}
+  i=Math.max(0,Math.min(i,list.length-1));
+  startMusic(i,list);
+}
+// 睡眠定时器：弹窗选时长，到点暂停播放
+// App 端：ddnas.setSleepTimer → MusicService 持 WakeLock 执行，息屏也到点停
+// 浏览器端：JS setTimeout fallback（页面不能关，否则失效）
+let musicSleepMs=0;     // 剩余毫秒（0=未设定）
+let musicSleepTimer=null; // 浏览器端 setTimeout 句柄
+// 弹出选择式弹窗（替代 prompt 文本输入）：15/30/45/60/取消
+function musicSleepMenu(){
+  document.getElementById("sleep-modal").style.display="flex";
+}
+function closeSleepMenu(){
+  document.getElementById("sleep-modal").style.display="none";
+}
+function pickSleep(mins){
+  closeSleepMenu();
+  if(mins>0){
+    if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){
+      try{ddnas.setSleepTimer(mins);}catch(e){}
+    }
+    musicSleepMs=mins*60*1000;
+    if(musicSleepTimer){clearTimeout(musicSleepTimer);musicSleepTimer=null;}
+    // 浏览器端 fallback：无 App 桥时用 setTimeout
+    if(typeof ddnas==="undefined"||typeof ddnas.setSleepTimer!=="function"){
+      musicSleepTimer=setTimeout(function(){
+        if(musicAudio){musicAudio.pause();}
+        musicPlaying=false;updateMusicBtn();
+        musicSleepMs=0;updateSleepBtn();
+        toast("睡眠定时已到，播放已暂停");
+      },mins*60*1000);
+    }
+    updateSleepBtn();
+    toast(mins+"分钟后暂停播放");
+  }else{
+    if(typeof ddnas!=="undefined"&&typeof ddnas.setSleepTimer==="function"){
+      try{ddnas.setSleepTimer(0);}catch(e){}
+    }
+    if(musicSleepTimer){clearTimeout(musicSleepTimer);musicSleepTimer=null;}
+    musicSleepMs=0;
+    updateSleepBtn();
+    toast("已取消睡眠定时");
+  }
+}
+function updateSleepBtn(){
+  const el=document.getElementById("m-sleep");
+  if(!el)return;
+  if(musicSleepMs>0){
+    const mins=Math.ceil(musicSleepMs/60000);
+    el.textContent="🌙"+mins+"m";
+    el.style.color="var(--accent)";
+  }else{
+    el.textContent="🌙";
+    el.style.color="";
+  }
 }
 function fmtTime(s){s=Math.floor(s||0);const m=Math.floor(s/60),ss=s%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss;}
 
@@ -1646,8 +2077,14 @@ function onMusicStateChange(json){
       if(item){document.getElementById("m-title").textContent=item.name;renderMusicList();}
     }
     if(typeof s.position==="number"&&typeof s.duration==="number"&&s.duration>0){
-      document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
+      // 拖动中不回写进度条，否则会把用户正在拖的滑块弹回当前位置
+      if(!musicSeeking) document.getElementById("m-seek").value=Math.round(s.position/s.duration*100);
       document.getElementById("m-meta").textContent=fmtTime(s.position/1000)+" / "+fmtTime(s.duration/1000);
+    }
+    // 睡眠定时器状态同步：Service 设定/到点/取消后通知 UI
+    if(typeof s.sleepMs==="number"){
+      musicSleepMs=s.sleepMs;
+      updateSleepBtn();
     }
   }catch(e){}
 }

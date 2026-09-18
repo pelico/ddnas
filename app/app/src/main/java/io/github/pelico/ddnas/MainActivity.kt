@@ -80,6 +80,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 节能：前后台状态驱动 MusicService 进度推送退避
+        // onStart=前台（UI 可见，1s 推进度）/ onStop=后台（退避 5s→10s→30s，保播放不停）
+        // 用 DefaultLifecycleObserver（@OnLifecycleEvent 已废弃，新版 lifecycle 不再支持）
+        lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
+            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { MusicService.instance?.setUiVisible(true) }
+            override fun onStop(owner: androidx.lifecycle.LifecycleOwner) { MusicService.instance?.setUiVisible(false) }
+        })
+
         treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) onTreePicked(uri)
         }
@@ -213,7 +221,21 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                // 登录后清理登录页历史：
+                                // 首次加载 /portal 未登录 → 302 到 /admin/login → 登录成功 302 回 /portal
+                                // 此时 WebView history = [/portal, /admin/login, /portal]
+                                // 手势返回 goBack() 会回到 /admin/login 而非退出 → 体验断裂
+                                // portal 是 SPA（tab 切换走 JS DOM 不产生 URL history），clearHistory
+                                // 只清掉登录页，不影响后续正常使用。
+                                if (url != null && url.contains("/portal") &&
+                                    view != null && view.canGoBack()) {
+                                    view.clearHistory()
+                                }
+                            }
+                        }
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(Bridge(), "ddnas")
@@ -460,35 +482,71 @@ class MainActivity : ComponentActivity() {
             MusicService.play(this@MainActivity, index, tracks, origin, cookie)
         }
 
-        /** 播放控制：play / pause / next / prev / stop */
+        /** 播放控制：play / pause / next / prev / stop。
+         *  JS 桥方法运行在 binder 线程，ExoPlayer 必须在主线程（创建线程）调用，
+         *  否则 verifyApplicationThread 警告 + 内部状态非线程安全导致操作静默失效。 */
         @JavascriptInterface
         fun musicControl(action: String) {
-            val svc = MusicService.instance ?: return
-            when (action) {
-                "play" -> svc.resumePlayer()
-                "pause" -> svc.pausePlayer()
-                "next" -> svc.nextTrack()
-                "prev" -> svc.prevTrack()
-                "stop" -> svc.stopMusic()
+            runOnUiThread {
+                val svc = MusicService.instance ?: return@runOnUiThread
+                when (action) {
+                    "play" -> svc.resumePlayer()
+                    "pause" -> svc.pausePlayer()
+                    "next" -> svc.nextTrack()
+                    "prev" -> svc.prevTrack()
+                    "stop" -> svc.stopMusic()
+                }
             }
         }
 
-        /** 播放列表中指定索引的歌曲。 */
+        /** 播放列表中指定索引的歌曲。每次都带最新 cookie，防止后台过期。 */
         @JavascriptInterface
         fun musicPlayAt(index: Int) {
-            MusicService.instance?.playAt(index)
+            runOnUiThread {
+                val svc = MusicService.instance ?: return@runOnUiThread
+                // 从 WebView 取最新 cookie 刷新给 Service，防止后台会话过期导致 401
+                val active = currentServer()
+                if (active != null) {
+                    val origin = active.url.trimEnd('/')
+                    val ck = CookieManager.getInstance().getCookie(origin) ?: ""
+                    svc.playAt(index, ck)
+                } else {
+                    svc.playAt(index)
+                }
+            }
         }
 
         /** 拖动进度：percent 0~100，Service 内按 duration 换算 position。 */
         @JavascriptInterface
         fun musicSeek(percent: Int) {
-            MusicService.instance?.seekToPercent(percent)
+            runOnUiThread { MusicService.instance?.seekToPercent(percent) }
         }
 
-        /** 返回当前播放状态 JSON：{playing,index,position,duration}。 */
+        /** 睡眠定时器：minutes 分钟后暂停播放。0=取消定时。 */
         @JavascriptInterface
-        fun getMusicState(): String = MusicService.instance?.getStateJson()
-            ?: """{"playing":false,"index":0,"position":0,"duration":0}"""
+        fun setSleepTimer(minutes: Int) {
+            runOnUiThread {
+                if (minutes <= 0) {
+                    MusicService.instance?.cancelSleepTimer()
+                } else {
+                    MusicService.instance?.setSleepTimer(minutes)
+                }
+            }
+        }
+
+        /** 返回当前播放状态 JSON：{playing,index,position,duration}。
+         *  同步在主线程执行（binder 线程阻塞等待结果，最多 1s 超时）。 */
+        @JavascriptInterface
+        fun getMusicState(): String {
+            val result = arrayOf("""{"playing":false,"index":0,"position":0,"duration":0}""")
+            val latch = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread {
+                result[0] = MusicService.instance?.getStateJson() ?: result[0]
+                latch.countDown()
+            }
+            try { latch.await(1, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {}
+            return result[0]
+        }
 
         private fun escJSON(s: String): String =
             s.replace("\\", "\\\\").replace("\"", "\\\"")

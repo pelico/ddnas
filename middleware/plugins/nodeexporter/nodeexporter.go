@@ -331,6 +331,10 @@ func parseSystem(ms []metric) systemInfo {
 	}
 	if info.Memory.Total > 0 {
 		info.Memory.Used = info.Memory.Total - info.Memory.Available
+		// 脏数据守卫：Available > Total（node_exporter 偶发异常）时 used 为负，置 0
+		if info.Memory.Used < 0 {
+			info.Memory.Used = 0
+		}
 		info.Memory.UsagePercent = info.Memory.Used / info.Memory.Total * 100
 	}
 	info.Disks = parseFS(ms)
@@ -398,14 +402,31 @@ func parseFS(metrics []metric) []fsInfo {
 	free := map[string]float64{}
 	dev := map[string]string{}
 	fs := map[string]string{}
+	// 按 device 去重：Docker 容器把宿主 /etc/hostname, /etc/hosts, /etc/resolv.conf
+	// bind mount 进容器，node_exporter 看到同一 /dev/xxx 挂到 3 个 mountpoint。
+	// 用 mountpoint 作 key 会把同一磁盘显示成 3 个，前端累加容量虚高 3 倍。
+	// 改用 device 去重，同 device 只保留首个 mountpoint。
+	seenDev := map[string]bool{}
+	// 第一遍：收集 size + free，不依赖顺序（实测 free_bytes 在 size_bytes 之前出现，
+	// 旧代码的 if size[mp] exists 守卫导致 free 永远不被记录 → 可用容量显示 0）
 	for _, m := range metrics {
+		mp := m.labels["mountpoint"]
+		d := m.labels["device"]
 		switch m.name {
 		case "node_filesystem_size_bytes":
-			size[m.labels["mountpoint"]] = m.value
-			dev[m.labels["mountpoint"]] = m.labels["device"]
-			fs[m.labels["mountpoint"]] = m.labels["fstype"]
+			// 同一 device 只保留首次出现的 mountpoint
+			if d != "" && seenDev[d] {
+				continue
+			}
+			if d != "" {
+				seenDev[d] = true
+			}
+			size[mp] = m.value
+			dev[mp] = d
+			fs[mp] = m.labels["fstype"]
 		case "node_filesystem_free_bytes":
-			free[m.labels["mountpoint"]] = m.value
+			// 无条件记录 free，不依赖 size 是否已存在（顺序不保证）
+			free[mp] = m.value
 		}
 	}
 	var out []fsInfo
@@ -418,6 +439,10 @@ func parseFS(metrics []metric) []fsInfo {
 		}
 		f := free[mp]
 		used := tot - f
+		// 脏数据守卫：free > size（node_exporter 偶发异常）时 used 为负，置 0
+		if used < 0 {
+			used = 0
+		}
 		pct := 0.0
 		if tot > 0 {
 			pct = used / tot * 100
@@ -446,6 +471,13 @@ func isVirtualFS(fstype string) bool {
 	return false
 }
 
+// netCounterMax 单网卡累计 counter 合理性上限：1 EB（10^18 字节）。
+// 物理网卡不可能达到该量级。实测 node_exporter 偶发返回 1.8446744e+19
+// （接近 uint64 上限 1.8446744073709552e+19）的脏值，是 64 位 counter
+// 溢出/回绕中的中间态，聚合后 sumTx 飙到 16383 PB，前端显示"一会 MB 一会 PB"。
+// 超过该上限视为脏数据置 0，避免污染聚合与速率计算。
+const netCounterMax = 1e18
+
 func parseNet(metrics []metric) []netInfo {
 	rx := map[string]float64{}
 	tx := map[string]float64{}
@@ -455,12 +487,18 @@ func parseNet(metrics []metric) []netInfo {
 		if isVirtualNet(d) {
 			continue
 		}
+		v := m.value
+		// 不过滤脏 counter（如 eth0 tx=1.84e19 uint64 溢出值）：
+		// - 绝对值错（16 EB），但增量是对的（counter 仍在涨）
+		// - computeNetRate 用增量算速率，脏绝对值不影响速率
+		// - 前端 fmtBytes 对 > 1e18 的值显示 "—"，避免显示 16383 PB
+		// - counter 回绕时 computeNetRate 的 n.TxBytes < prev.tx 守卫会跳过那一轮
 		switch m.name {
 		case "node_network_receive_bytes_total":
-			rx[d] = m.value
+			rx[d] = v
 			devs[d] = true
 		case "node_network_transmit_bytes_total":
-			tx[d] = m.value
+			tx[d] = v
 			devs[d] = true
 		}
 	}
@@ -477,14 +515,12 @@ func isVirtualNet(dev string) bool {
 		return true
 	}
 	switch {
-	case strings.HasPrefix(dev, "docker"),
-		strings.HasPrefix(dev, "veth"),
-		strings.HasPrefix(dev, "br-"),
-		strings.HasPrefix(dev, "veth"),
-		strings.HasPrefix(dev, "cni"),
-		strings.HasPrefix(dev, "flannel"),
-		dev == "docker0",
-		dev == "br0":
+	case strings.HasPrefix(dev, "docker"), // docker0/dockerX
+		strings.HasPrefix(dev, "veth"),  // vethXXX 容器虚拟网卡
+		strings.HasPrefix(dev, "br-"),   // br-XXX Docker 网桥
+		strings.HasPrefix(dev, "cni"),   // CNI 插件虚拟网卡
+		strings.HasPrefix(dev, "flannel"), // flannel 虚拟网卡
+		dev == "br0":                    // 无连字符网桥
 		return true
 	}
 	return false
