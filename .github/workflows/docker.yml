@@ -65,6 +65,14 @@ jobs:
           else
             echo "verarchtag=" >> "$GITHUB_OUTPUT"
           fi
+          # git 提交总数作为构建号，形如 v1.1 · 构建 1289（每次 push 递增）
+          echo "buildnum=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          # 语义版本：tag 推引用 tag 名，main 推送缺省 v1.1
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "appver=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "appver=v1.1" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push single-arch image
         uses: docker/build-push-action@v6
@@ -78,6 +86,8 @@ jobs:
           build-args: |
             TARGETARCH=${{ matrix.goarch }}
             TARGETVARIANT=${{ matrix.goarm != '' && format('v{0}', matrix.goarm) || '' }}
+            BUILD_NUMBER=${{ steps.tags.outputs.buildnum }}
+            APP_VERSION=${{ steps.tags.outputs.appver }}
           tags: |
             ${{ steps.tags.outputs.archtag }}
             ${{ steps.tags.outputs.verarchtag }}

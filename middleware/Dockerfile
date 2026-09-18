@@ -12,6 +12,10 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG TARGETVARIANT=
+# git 提交总数（每次 push 递增），由 CI 通过 build-arg 传入；本地构建缺省取 0。
+ARG BUILD_NUMBER=0
+# 语义版本，缺省 v1.1；CI 传 tag 名时覆盖。
+ARG APP_VERSION=v1.1
 ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}
 WORKDIR /src
 COPY go.mod go.sum* ./
@@ -23,8 +27,9 @@ RUN set -eux; \
     case "${TARGETARCH}" in \
       arm) export GOARM="${TARGETVARIANT#v}"; [ -n "$GOARM" ] || export GOARM=7 ;; \
     esac; \
+    echo ">>> APP_VERSION=${APP_VERSION} BUILD_NUMBER=${BUILD_NUMBER}"; \
     echo ">>> cross-compile target: GOOS=${GOOS} GOARCH=${GOARCH} GOARM=${GOARM:-}"; \
-    go build -ldflags="-s -w" -trimpath -o /out/ddnas ./cmd/ddnas
+    go build -ldflags="-s -w -X github.com/pelico/ddnas/middleware/internal/server.appVersion=${APP_VERSION} -X github.com/pelico/ddnas/middleware/internal/server.buildNumber=${BUILD_NUMBER}" -trimpath -o /out/ddnas ./cmd/ddnas
 
 FROM alpine:3.20
 # su-exec：alpine 的 setuid 降权工具，供 entrypoint 从 root 降到运行用户。
