@@ -353,18 +353,17 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 .bk-browse-foot .bk-btn{flex:1;padding:9px 0;text-align:center;font-size:13px;font-weight:600}
 
 /* ===== 迷你音乐播放器（底部固定条） ===== */
-.music-player{position:fixed;left:0;right:0;bottom:50px;z-index:30;background:var(--card);border-top:1px solid var(--bd);padding:8px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 -2px 12px rgba(0,0,0,.1)}
-.music-player .m-info{flex:1;min-width:0}
-.music-player .m-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.music-player .m-meta{font-size:11px;color:var(--muted);margin-top:2px}
-.music-player .m-bar{display:flex;align-items:center;gap:8px;flex:2;min-width:120px}
+.music-player{position:fixed;left:0;right:0;bottom:50px;z-index:30;background:var(--card);border-top:1px solid var(--bd);padding:10px 12px 8px;display:flex;flex-direction:column;gap:6px;box-shadow:0 -2px 12px rgba(0,0,0,.1)}
+.music-player .m-top{display:flex;align-items:center;gap:8px}
+.music-player .m-title{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.music-player .m-bar{display:flex;align-items:center;gap:8px}
 .music-player .m-bar input[type=range]{flex:1;height:4px;accent-color:var(--accent)}
-.music-player .m-time{font-size:10px;color:var(--muted);min-width:36px;text-align:center}
-.music-player .m-ctrls{display:flex;align-items:center;gap:6px}
+.music-player .m-time{font-size:11px;color:var(--muted);white-space:nowrap}
+.music-player .m-ctrls{display:flex;align-items:center;justify-content:space-evenly;gap:6px}
 .music-player .m-btn{width:32px;height:32px;border-radius:50%;border:none;background:var(--surface2);cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center}
 .music-player .m-btn.play{background:var(--accent);color:#fff}
 .music-player .m-btn:active{opacity:.7}
-.music-player .m-close{margin-left:4px;font-size:16px;color:var(--muted);cursor:pointer;background:none;border:none;padding:4px}
+.music-player .m-close{margin-left:auto;font-size:16px;color:var(--muted);cursor:pointer;background:none;border:none;padding:2px}
 /* App WebView 里 vh 单位不可靠（与 position:fixed 实际可视矩形不一致，
    同 .bk-browse-card 的 height:80vh 问题），导致 max-height:40vh 把列表压扁看不见。
    改用固定 max-height；min-height 保证至少能看到一行 */
@@ -687,11 +686,12 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
 
 <!-- 迷你音乐播放器（底部固定条，非全屏） -->
 <div class="music-player" id="music-player" style="display:none">
-  <div class="m-info">
+  <div class="m-top">
     <div class="m-title" id="m-title">—</div>
-    <div class="m-meta" id="m-meta">00:00 / 00:00</div>
+    <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
   </div>
   <div class="m-bar">
+    <span class="m-time" id="m-meta">00:00 / 00:00</span>
     <input type="range" id="m-seek" min="0" max="100" value="0" step="1"
       onmousedown="musicSeeking=true" ontouchstart="musicSeeking=true"
       oninput="musicSeek(+this.value)"
@@ -704,7 +704,6 @@ button{border:0;background:transparent;color:inherit;font:inherit;padding:0;curs
     <button class="m-btn" onclick="musicToggleList()" title="播放列表">≡</button>
     <button class="m-btn" id="m-sleep" onclick="musicSleepMenu()" title="睡眠定时">🌙</button>
   </div>
-  <button class="m-close" onclick="musicClose()" title="关闭">✕</button>
 </div>
 <div class="music-list" id="music-list"></div>
 
@@ -2034,7 +2033,13 @@ function startMusic(idx,list){
     musicAudio.addEventListener("ended",()=>{musicOnEnded();});
     musicAudio.addEventListener("timeupdate",()=>{updateMusicProgress();});
     musicAudio.addEventListener("loadedmetadata",()=>{updateMusicProgress();});
-    musicAudio.addEventListener("error",()=>{toast("播放失败："+(musicAudio.error?.message||"未知"));musicNext();});
+    musicAudio.addEventListener("error",()=>{
+      const nm=(musicPlaylist[musicIndex]&&musicPlaylist[musicIndex].name)||"当前音频";
+      // 云盘文件被移动/重命名后旧链接失效，回源 404 会被浏览器报成 MEDIA_ELEMENT FORMAT_ERROR，
+      // 换成对用户友好的提示，避免误以为格式不支持。
+      toast("无法播放「"+nm+"」：文件可能已被移动或重命名（旧链接失效），或格式不受本浏览器支持。请重新添加正确的播放列表。");
+      musicNext();
+    });
   }
   musicAudio.src=item.url;
   musicAudio.play().then(()=>{musicPlaying=true;updateMusicBtn();}).catch(e=>{
